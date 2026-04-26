@@ -1,0 +1,25 @@
+send:
+  name: Send Request
+  description: >
+    Send a saved HTTP request. Dynamic slot values can be passed via params.
+  fields:
+    request:
+      name: Request
+      description: The name of the saved request to send.
+      required: true
+      example: "person_arrived"
+      selector:
+        select:
+          options: []
+          mode: dropdown
+          custom_value: true
+    params:
+      name: Parameters
+      description: >
+        Key-value pairs for dynamic slots defined in the request.
+        Supports Jinja2 templates.
+      required: false
+      example:
+        location: "ישראל"
+      selector:
+        object:

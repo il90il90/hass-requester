@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Node / Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Environment & secrets
+.env
+.env.*
+*.secret
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local dev / test
+tmp/
+*.log
+implementation-plan/

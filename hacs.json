@@ -1,0 +1,8 @@
+{
+  "name": "HASS Requester",
+  "description": "Send HTTP requests from automations with a beautiful panel UI and dynamic slot parameters",
+  "render_readme": true,
+  "homeassistant": "2024.1.0",
+  "content_in_root": false,
+  "icon": "https://raw.githubusercontent.com/il90i/hass-requester/main/logo.png"
+}

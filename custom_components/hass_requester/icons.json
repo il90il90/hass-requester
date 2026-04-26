@@ -1,0 +1,8 @@
+{
+  "integration": {
+    "icon": "mdi:home-lightning-bolt"
+  },
+  "services": {
+    "send": "mdi:send-circle"
+  }
+}
