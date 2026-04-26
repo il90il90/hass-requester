@@ -23,6 +23,25 @@ Send HTTP requests from Home Assistant automations with a beautiful panel UI and
 
 ---
 
+## Screenshots
+
+### Panel — Request Editor
+Define your request once with dynamic slots. The hint box shows exactly how to reference each slot in your URL.
+
+![Panel Editor](screenshots/panel-editor.png)
+
+### Automation — Action Picker
+Search for `Requester:` to find your request directly. Each saved request appears as a dedicated action.
+
+![Automation Picker](screenshots/automation-picker.png)
+
+### Automation — Guided Slot Inputs
+Select your request and get labeled fields with examples for each slot — static values or HA templates.
+
+![Automation Editor](screenshots/automation-editor.png)
+
+---
+
 ## Installation via HACS
 
 ### Step 1 — Add as Custom Repository
