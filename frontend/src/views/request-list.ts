@@ -11,6 +11,9 @@ export class RequestList extends LitElement {
   @state() private _copiedId: string | null = null;
   @state() private _importing = false;
   @state() private _importError = "";
+  @state() private _importConflicts: Array<{ incoming: Record<string, unknown>; existing: HassRequest }> = [];
+  @state() private _conflictChoices: Record<string, "update" | "skip"> = {};
+  @state() private _pendingImportNew: Array<Record<string, unknown>> = [];
 
   static styles = css`
     :host {
@@ -309,6 +312,145 @@ export class RequestList extends LitElement {
     }
     .confirm-delete:disabled { opacity: 0.6; cursor: not-allowed; }
 
+    /* ── Import conflict dialog ── */
+    .conflict-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 110;
+    }
+    .conflict-card {
+      background: var(--card-background-color);
+      border-radius: 10px;
+      padding: 24px;
+      max-width: 480px;
+      width: 94%;
+      max-height: 80vh;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+    }
+    .conflict-card h3 { margin: 0 0 6px; font-size: 17px; }
+    .conflict-subtitle {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      margin: 0 0 16px;
+    }
+    .conflict-new-notice {
+      font-size: 13px;
+      color: #43a047;
+      background: rgba(67,160,71,0.1);
+      border: 1px solid rgba(67,160,71,0.3);
+      border-radius: 6px;
+      padding: 7px 12px;
+      margin-bottom: 14px;
+    }
+    .conflict-list {
+      overflow-y: auto;
+      flex: 1;
+      margin-bottom: 16px;
+    }
+    .conflict-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--divider-color);
+      gap: 10px;
+    }
+    .conflict-item:last-child { border-bottom: none; }
+    .conflict-item-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      flex: 1;
+      min-width: 0;
+    }
+    .conflict-item-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--primary-text-color);
+    }
+    .conflict-item-meta {
+      font-size: 12px;
+      color: var(--secondary-text-color);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .conflict-toggle {
+      display: flex;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      overflow: hidden;
+      flex-shrink: 0;
+    }
+    .conflict-toggle button {
+      padding: 5px 12px;
+      border: none;
+      background: none;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      color: var(--secondary-text-color);
+      transition: background 0.15s, color 0.15s;
+    }
+    .conflict-toggle button.active-update {
+      background: var(--primary-color);
+      color: white;
+    }
+    .conflict-toggle button.active-skip {
+      background: var(--secondary-background-color, #e0e0e0);
+      color: var(--primary-text-color);
+    }
+    .conflict-bulk {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .conflict-bulk button {
+      padding: 4px 12px;
+      border-radius: 4px;
+      border: 1px solid var(--divider-color);
+      background: none;
+      font-size: 12px;
+      cursor: pointer;
+      color: var(--secondary-text-color);
+    }
+    .conflict-bulk button:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+    .conflict-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding-top: 4px;
+    }
+    .conflict-cancel {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .conflict-confirm {
+      padding: 8px 20px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .conflict-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+
     /* ── Mobile: convert table rows into stacked cards ── */
     @media (max-width: 640px) {
       :host {
@@ -419,7 +561,6 @@ export class RequestList extends LitElement {
     if (!file) return;
     input.value = "";
     this._importError = "";
-    this._importing = true;
     try {
       const text = await file.text();
       const parsed = JSON.parse(text);
@@ -429,13 +570,74 @@ export class RequestList extends LitElement {
         ? parsed.requests
         : null;
       if (!requests) throw new Error("Invalid backup file format.");
-      let imported = 0;
+
+      const newRequests: Array<Record<string, unknown>> = [];
+      const conflicts: Array<{ incoming: Record<string, unknown>; existing: HassRequest }> = [];
+
       for (const req of requests) {
-        // Strip ID so backend generates a new one
-        const { id: _id, ...payload } = req as Record<string, unknown>;
-        await this.hass.callWS({ type: "hass_requester/create", ...payload });
-        imported++;
+        const incomingName = String(req.name ?? "").toLowerCase();
+        const existing = this.requests.find(
+          (r) => r.name.toLowerCase() === incomingName
+        );
+        if (existing) {
+          conflicts.push({ incoming: req, existing });
+        } else {
+          newRequests.push(req);
+        }
       }
+
+      if (conflicts.length === 0) {
+        // No conflicts — import directly
+        this._importing = true;
+        for (const req of newRequests) {
+          const { id: _id, ...payload } = req;
+          await this.hass.callWS({ type: "hass_requester/create", ...payload });
+        }
+        this.dispatchEvent(new CustomEvent("imported", { bubbles: true, composed: true }));
+      } else {
+        // Store state and show conflict dialog
+        this._pendingImportNew = newRequests;
+        this._importConflicts = conflicts;
+        // Default choice: update all
+        const choices: Record<string, "update" | "skip"> = {};
+        for (const c of conflicts) {
+          choices[c.existing.id] = "update";
+        }
+        this._conflictChoices = choices;
+      }
+    } catch (err: unknown) {
+      this._importError =
+        err instanceof Error ? err.message : "Failed to import backup file.";
+    } finally {
+      this._importing = false;
+    }
+  }
+
+  private async _confirmImport() {
+    this._importing = true;
+    this._importError = "";
+    try {
+      // Create new (no-conflict) requests
+      for (const req of this._pendingImportNew) {
+        const { id: _id, ...payload } = req;
+        await this.hass.callWS({ type: "hass_requester/create", ...payload });
+      }
+      // Handle conflicts based on user choices
+      for (const { incoming, existing } of this._importConflicts) {
+        const choice = this._conflictChoices[existing.id] ?? "skip";
+        if (choice === "update") {
+          const { id: _id, ...payload } = incoming;
+          await this.hass.callWS({
+            type: "hass_requester/update",
+            request_id: existing.id,
+            ...payload,
+          });
+        }
+        // skip: do nothing
+      }
+      this._importConflicts = [];
+      this._pendingImportNew = [];
+      this._conflictChoices = {};
       this.dispatchEvent(new CustomEvent("imported", { bubbles: true, composed: true }));
     } catch (err: unknown) {
       this._importError =
@@ -443,6 +645,13 @@ export class RequestList extends LitElement {
     } finally {
       this._importing = false;
     }
+  }
+
+  private _cancelImportConflict() {
+    this._importConflicts = [];
+    this._pendingImportNew = [];
+    this._conflictChoices = {};
+    this._importError = "";
   }
 
   private async _deleteConfirmed() {
@@ -645,6 +854,84 @@ export class RequestList extends LitElement {
               </div>
             `;
           })()
+        : html``}
+
+      ${this._importConflicts.length > 0
+        ? html`
+            <div class="conflict-overlay">
+              <div class="conflict-card">
+                <h3>⚠️ Conflicts Found</h3>
+                <p class="conflict-subtitle">
+                  ${this._importConflicts.length} request${this._importConflicts.length !== 1 ? "s" : ""}
+                  already exist${this._importConflicts.length === 1 ? "s" : ""} with the same name.
+                  Choose what to do for each one.
+                </p>
+
+                ${this._pendingImportNew.length > 0
+                  ? html`
+                      <div class="conflict-new-notice">
+                        ✓ ${this._pendingImportNew.length} new request${this._pendingImportNew.length !== 1 ? "s" : ""}
+                        will be created automatically.
+                      </div>
+                    `
+                  : html``}
+
+                <div class="conflict-bulk">
+                  <button @click=${() => {
+                    const all: Record<string, "update" | "skip"> = {};
+                    this._importConflicts.forEach(c => { all[c.existing.id] = "update"; });
+                    this._conflictChoices = all;
+                  }}>Update All</button>
+                  <button @click=${() => {
+                    const all: Record<string, "update" | "skip"> = {};
+                    this._importConflicts.forEach(c => { all[c.existing.id] = "skip"; });
+                    this._conflictChoices = all;
+                  }}>Skip All</button>
+                </div>
+
+                <div class="conflict-list">
+                  ${this._importConflicts.map(({ existing }) => html`
+                    <div class="conflict-item">
+                      <div class="conflict-item-info">
+                        <span class="conflict-item-name">${existing.name}</span>
+                        <span class="conflict-item-meta">
+                          <span class="method-badge method-${existing.method}">${existing.method}</span>
+                          &nbsp;${existing.url}
+                        </span>
+                      </div>
+                      <div class="conflict-toggle">
+                        <button
+                          class=${this._conflictChoices[existing.id] === "update" ? "active-update" : ""}
+                          @click=${() => {
+                            this._conflictChoices = { ...this._conflictChoices, [existing.id]: "update" };
+                          }}
+                        >Update</button>
+                        <button
+                          class=${this._conflictChoices[existing.id] === "skip" ? "active-skip" : ""}
+                          @click=${() => {
+                            this._conflictChoices = { ...this._conflictChoices, [existing.id]: "skip" };
+                          }}
+                        >Skip</button>
+                      </div>
+                    </div>
+                  `)}
+                </div>
+
+                <div class="conflict-actions">
+                  <button class="conflict-cancel" @click=${this._cancelImportConflict}>
+                    Cancel
+                  </button>
+                  <button
+                    class="conflict-confirm"
+                    ?disabled=${this._importing}
+                    @click=${this._confirmImport}
+                  >
+                    ${this._importing ? "Importing..." : "Confirm Import"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          `
         : html``}
     `;
   }
