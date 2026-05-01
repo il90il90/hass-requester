@@ -1,7 +1,6 @@
 """Execute HTTP requests with Jinja2 slot rendering."""
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 from urllib.parse import urlencode, urlparse, urlunparse
@@ -47,6 +46,24 @@ def _render_body(
     return body
 
 
+def _render_params(
+    hass: HomeAssistant, params: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Render HA Jinja2 templates inside slot param values.
+    Called before slot validation so callers can pass templates like
+    '{{ states("input_text.name") }}' and receive the resolved value.
+    Non-string values (int, bool, None) are passed through unchanged.
+    """
+    result: dict[str, Any] = {}
+    for k, v in params.items():
+        if isinstance(v, str):
+            result[k] = _render(hass, v, {})
+        else:
+            result[k] = v
+    return result
+
+
 def _validate_slots(
     request_config: dict[str, Any], params: dict[str, Any]
 ) -> dict[str, Any]:
@@ -79,9 +96,12 @@ async def async_send_request(
 ) -> None:
     """
     Execute an HTTP request with rendered slot values.
+    Slot param values may themselves contain HA Jinja2 templates — they
+    are resolved first so the rendered value is available during URL/body rendering.
     Logs the outcome; does not return response data (v1 scope).
     """
-    variables = _validate_slots(request_config, params)
+    rendered_params = _render_params(hass, params)
+    variables = _validate_slots(request_config, rendered_params)
 
     # Render URL
     rendered_url = _render(hass, request_config["url"], variables)

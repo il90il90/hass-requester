@@ -21,6 +21,8 @@ export class RequestList extends LitElement {
       justify-content: space-between;
       align-items: center;
       margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 12px;
     }
     .header-title {
       display: flex;
@@ -72,6 +74,12 @@ export class RequestList extends LitElement {
       border-bottom: 1px solid var(--divider-color);
       font-size: 14px;
       color: var(--primary-text-color);
+    }
+    td.url-cell {
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     tr:last-child td {
       border-bottom: none;
@@ -177,6 +185,69 @@ export class RequestList extends LitElement {
       cursor: pointer;
       font-weight: 600;
     }
+
+    /* ── Mobile: convert table rows into stacked cards ── */
+    @media (max-width: 640px) {
+      :host {
+        padding: 16px 12px;
+      }
+      thead {
+        display: none;
+      }
+      table {
+        background: transparent;
+        box-shadow: none;
+      }
+      tbody tr {
+        display: block;
+        background: var(--card-background-color);
+        border-radius: 8px;
+        margin-bottom: 12px;
+        box-shadow: var(--ha-card-box-shadow, 0 2px 4px rgba(0,0,0,.1));
+        overflow: hidden;
+      }
+      td {
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--divider-color);
+        max-width: 100%;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: initial;
+      }
+      td:last-child {
+        border-bottom: none;
+      }
+      td::before {
+        content: attr(data-label);
+        min-width: 58px;
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--secondary-text-color);
+        padding-top: 2px;
+        flex-shrink: 0;
+      }
+      td.url-cell {
+        max-width: 100%;
+        word-break: break-all;
+        white-space: normal;
+      }
+      td.actions-cell {
+        background: var(--secondary-background-color, #f9f9f9);
+        justify-content: flex-end;
+      }
+      td.actions-cell::before {
+        display: none;
+      }
+      .action-btn {
+        padding: 8px 20px;
+        font-size: 13px;
+      }
+    }
   `;
 
   private _edit(request: HassRequest) {
@@ -250,16 +321,16 @@ export class RequestList extends LitElement {
                 ${this.requests.map(
                   (req) => html`
                     <tr>
-                      <td><strong>${req.name}</strong></td>
-                      <td>
+                      <td data-label="Name"><strong>${req.name}</strong></td>
+                      <td data-label="Method">
                         <span class="method-badge method-${req.method}">
                           ${req.method}
                         </span>
                       </td>
-                      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                      <td class="url-cell" data-label="URL">
                         ${req.url}
                       </td>
-                      <td>
+                      <td data-label="Slots">
                         <div class="slots-cell">
                           ${req.slots.length === 0
                             ? html`<span style="color:var(--secondary-text-color);font-size:12px;">none</span>`
@@ -268,7 +339,7 @@ export class RequestList extends LitElement {
                               )}
                         </div>
                       </td>
-                      <td>
+                      <td class="actions-cell">
                         <div class="actions">
                           <button
                             class="action-btn edit-btn"
