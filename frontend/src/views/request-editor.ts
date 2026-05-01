@@ -37,6 +37,8 @@ export class RequestEditor extends LitElement {
   @state() private _testResult: { success: boolean; message: string } | null = null;
   @state() private _testParams: Record<string, string> = {};
   @state() private _importFileError = "";
+  @state() private _copyDialog: { data: string; filename: string } | null = null;
+  @state() private _copied = false;
 
   static styles = css`
     :host {
@@ -310,6 +312,63 @@ export class RequestEditor extends LitElement {
     .test-cancel { padding: 8px 18px; background: none; border: 1px solid var(--divider-color); border-radius: 6px; cursor: pointer; color: var(--primary-text-color); }
     .test-run { padding: 8px 20px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .test-run:disabled { opacity: 0.5; }
+    /* copy-fallback dialog */
+    .copy-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 220;
+    }
+    .copy-dialog-card {
+      background: var(--card-background-color);
+      border-radius: 10px;
+      padding: 22px;
+      max-width: 500px;
+      width: 94%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .copy-dialog-card h3 { margin: 0; font-size: 16px; }
+    .copy-dialog-card p { margin: 0; font-size: 13px; color: var(--secondary-text-color); }
+    .copy-dialog-card textarea {
+      width: 100%;
+      height: 180px;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: var(--secondary-background-color, #1e1e1e);
+      color: var(--primary-text-color);
+      resize: none;
+      box-sizing: border-box;
+    }
+    .copy-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .copy-dialog-close {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .copy-dialog-copy {
+      padding: 8px 20px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .copy-dialog-copy.done { background: #43a047; }
     .btn-export {
       padding: 8px 16px;
       background: none;
@@ -560,7 +619,7 @@ export class RequestEditor extends LitElement {
       ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
       : "request.json";
     const data = JSON.stringify(payload, null, 2);
-    await saveJsonFile(filename, data);
+    await saveJsonFile(filename, data, (d, f) => { this._copyDialog = { data: d, filename: f }; });
   }
 
   private async _triggerImportFile() {
@@ -964,6 +1023,36 @@ export class RequestEditor extends LitElement {
                   >
                     ${this._testing ? "Sending..." : "Send Request"}
                   </button>
+                </div>
+              </div>
+            </div>
+          `
+        : html``}
+
+      ${this._copyDialog
+        ? html`
+            <div class="copy-dialog-overlay">
+              <div class="copy-dialog-card">
+                <h3>📋 Save Request Manually</h3>
+                <p>
+                  Your browser couldn't download the file automatically.
+                  Copy the text below and save it as
+                  <strong>${this._copyDialog.filename}</strong>.
+                </p>
+                <textarea readonly .value=${this._copyDialog.data}></textarea>
+                <div class="copy-dialog-actions">
+                  <button
+                    class="copy-dialog-close"
+                    @click=${() => { this._copyDialog = null; this._copied = false; }}
+                  >Close</button>
+                  <button
+                    class="copy-dialog-copy ${this._copied ? "done" : ""}"
+                    @click=${async () => {
+                      await navigator.clipboard.writeText(this._copyDialog!.data);
+                      this._copied = true;
+                      setTimeout(() => { this._copied = false; }, 2500);
+                    }}
+                  >${this._copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
                 </div>
               </div>
             </div>

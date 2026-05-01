@@ -1,43 +1,102 @@
 /**
- * Save JSON data as a file. On mobile browsers (iOS Safari, etc.) that don't
- * support the `download` attribute, falls back to the Web Share API so the
- * user can save/share the file via the native sheet.
+ * Detect iOS (iPhone/iPad) including iPadOS 13+ which masquerades as macOS.
  */
-export async function saveJsonFile(filename: string, data: string): Promise<void> {
-  const blob = new Blob([data], { type: "application/json" });
+function isIOS(): boolean {
+  return (
+    /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)
+  );
+}
 
-  // Try Web Share API first (works reliably on mobile — iOS 15+, Android)
+/**
+ * Save JSON data as a file. Tries multiple strategies for maximum compatibility
+ * across desktop, mobile Safari, Android, and Home Assistant Companion (WKWebView).
+ *
+ * Strategy order:
+ *  1. Web Share API with File object  (iOS 15+ Safari, Android Chrome 86+)
+ *  2. <a href="data:..."> download    (iOS 13+ Safari — data URLs work, blob URLs don't)
+ *  3. <a href="blob:..."> download    (desktop Chrome/Firefox, Android)
+ *  4. Open blob in new tab            (last-resort for restricted WebViews)
+ *  5. Show copy-dialog                (absolute fallback — always works)
+ */
+export async function saveJsonFile(
+  filename: string,
+  data: string,
+  showFallbackDialog: (data: string, filename: string) => void
+): Promise<void> {
+  // ── Strategy 1: Web Share API (best on mobile) ──────────────────────────
   if (typeof navigator.share === "function") {
     try {
+      const blob = new Blob([data], { type: "application/json" });
       const file = new File([blob], filename, { type: "application/json" });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      if (navigator.canShare?.({ files: [file] })) {
         await navigator.share({ files: [file], title: filename });
         return;
       }
     } catch (err) {
-      // User cancelled share or share failed — fall through to blob download
       if (err instanceof Error && err.name === "AbortError") return;
+      // Share failed — continue to next strategy
     }
   }
 
-  // Desktop fallback: append link to body so iOS WKWebView / old browsers work
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.style.display = "none";
-  document.body.appendChild(a);
-  a.click();
-  // Small delay before cleanup so the browser has time to start the download
-  setTimeout(() => {
-    document.body.removeChild(a);
+  // ── Strategy 2: data: URI download (iOS Safari 13+) ─────────────────────
+  // iOS Safari supports <a download> for data: URLs but NOT for blob: URLs.
+  if (isIOS()) {
+    try {
+      const dataUri = `data:application/json;charset=utf-8,${encodeURIComponent(data)}`;
+      const a = document.createElement("a");
+      a.href = dataUri;
+      a.download = filename;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => document.body.removeChild(a), 300);
+      return;
+    } catch {
+      // Fall through
+    }
+  }
+
+  // ── Strategy 3: blob: URL download (desktop / Android) ──────────────────
+  try {
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 300);
+    return;
+  } catch {
+    // Fall through
+  }
+
+  // ── Strategy 4: open blob in new tab (restricted WebViews) ──────────────
+  try {
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const newWin = window.open(url, "_blank");
+    if (newWin) {
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      return;
+    }
     URL.revokeObjectURL(url);
-  }, 200);
+  } catch {
+    // Fall through
+  }
+
+  // ── Strategy 5: copy-dialog fallback ────────────────────────────────────
+  showFallbackDialog(data, filename);
 }
 
 /**
  * Open a native file-picker and return the selected File.
- * Works inside Shadow DOM by appending the input to document.body.
+ * Appended to document.body to work correctly inside Shadow DOM.
  */
 export function pickJsonFile(): Promise<File | null> {
   return new Promise((resolve) => {
@@ -47,21 +106,26 @@ export function pickJsonFile(): Promise<File | null> {
     input.style.display = "none";
     document.body.appendChild(input);
 
-    input.addEventListener("change", () => {
-      const file = input.files?.[0] ?? null;
-      document.body.removeChild(input);
-      resolve(file);
-    }, { once: true });
+    input.addEventListener(
+      "change",
+      () => {
+        const file = input.files?.[0] ?? null;
+        if (document.body.contains(input)) document.body.removeChild(input);
+        resolve(file);
+      },
+      { once: true }
+    );
 
-    // If user cancels without picking (focus returns to window)
-    window.addEventListener("focus", () => {
+    // Resolve null if the user dismisses without picking
+    const onFocus = () => {
       setTimeout(() => {
         if (document.body.contains(input)) {
           document.body.removeChild(input);
           resolve(null);
         }
-      }, 500);
-    }, { once: true });
+      }, 600);
+    };
+    window.addEventListener("focus", onFocus, { once: true });
 
     input.click();
   });

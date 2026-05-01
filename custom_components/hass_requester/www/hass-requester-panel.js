@@ -73,44 +73,97 @@ const t$2=t=>(e,o)=>{ void 0!==o?o.addInitializer(()=>{customElements.define(t,e
  */function r(r){return n({...r,state:true,attribute:false})}
 
 /**
- * Save JSON data as a file. On mobile browsers (iOS Safari, etc.) that don't
- * support the `download` attribute, falls back to the Web Share API so the
- * user can save/share the file via the native sheet.
+ * Detect iOS (iPhone/iPad) including iPadOS 13+ which masquerades as macOS.
  */
-async function saveJsonFile(filename, data) {
-    const blob = new Blob([data], { type: "application/json" });
-    // Try Web Share API first (works reliably on mobile — iOS 15+, Android)
+function isIOS() {
+    return (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+}
+/**
+ * Save JSON data as a file. Tries multiple strategies for maximum compatibility
+ * across desktop, mobile Safari, Android, and Home Assistant Companion (WKWebView).
+ *
+ * Strategy order:
+ *  1. Web Share API with File object  (iOS 15+ Safari, Android Chrome 86+)
+ *  2. <a href="data:..."> download    (iOS 13+ Safari — data URLs work, blob URLs don't)
+ *  3. <a href="blob:..."> download    (desktop Chrome/Firefox, Android)
+ *  4. Open blob in new tab            (last-resort for restricted WebViews)
+ *  5. Show copy-dialog                (absolute fallback — always works)
+ */
+async function saveJsonFile(filename, data, showFallbackDialog) {
+    // ── Strategy 1: Web Share API (best on mobile) ──────────────────────────
     if (typeof navigator.share === "function") {
         try {
+            const blob = new Blob([data], { type: "application/json" });
             const file = new File([blob], filename, { type: "application/json" });
-            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+            if (navigator.canShare?.({ files: [file] })) {
                 await navigator.share({ files: [file], title: filename });
                 return;
             }
         }
         catch (err) {
-            // User cancelled share or share failed — fall through to blob download
             if (err instanceof Error && err.name === "AbortError")
                 return;
+            // Share failed — continue to next strategy
         }
     }
-    // Desktop fallback: append link to body so iOS WKWebView / old browsers work
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    // Small delay before cleanup so the browser has time to start the download
-    setTimeout(() => {
-        document.body.removeChild(a);
+    // ── Strategy 2: data: URI download (iOS Safari 13+) ─────────────────────
+    // iOS Safari supports <a download> for data: URLs but NOT for blob: URLs.
+    if (isIOS()) {
+        try {
+            const dataUri = `data:application/json;charset=utf-8,${encodeURIComponent(data)}`;
+            const a = document.createElement("a");
+            a.href = dataUri;
+            a.download = filename;
+            a.style.display = "none";
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => document.body.removeChild(a), 300);
+            return;
+        }
+        catch {
+            // Fall through
+        }
+    }
+    // ── Strategy 3: blob: URL download (desktop / Android) ──────────────────
+    try {
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.style.display = "none";
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 300);
+        return;
+    }
+    catch {
+        // Fall through
+    }
+    // ── Strategy 4: open blob in new tab (restricted WebViews) ──────────────
+    try {
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const newWin = window.open(url, "_blank");
+        if (newWin) {
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+            return;
+        }
         URL.revokeObjectURL(url);
-    }, 200);
+    }
+    catch {
+        // Fall through
+    }
+    // ── Strategy 5: copy-dialog fallback ────────────────────────────────────
+    showFallbackDialog(data, filename);
 }
 /**
  * Open a native file-picker and return the selected File.
- * Works inside Shadow DOM by appending the input to document.body.
+ * Appended to document.body to work correctly inside Shadow DOM.
  */
 function pickJsonFile() {
     return new Promise((resolve) => {
@@ -121,18 +174,20 @@ function pickJsonFile() {
         document.body.appendChild(input);
         input.addEventListener("change", () => {
             const file = input.files?.[0] ?? null;
-            document.body.removeChild(input);
+            if (document.body.contains(input))
+                document.body.removeChild(input);
             resolve(file);
         }, { once: true });
-        // If user cancels without picking (focus returns to window)
-        window.addEventListener("focus", () => {
+        // Resolve null if the user dismisses without picking
+        const onFocus = () => {
             setTimeout(() => {
                 if (document.body.contains(input)) {
                     document.body.removeChild(input);
                     resolve(null);
                 }
-            }, 500);
-        }, { once: true });
+            }, 600);
+        };
+        window.addEventListener("focus", onFocus, { once: true });
         input.click();
     });
 }
@@ -149,6 +204,8 @@ let RequestList = class RequestList extends i$2 {
         this._importConflicts = [];
         this._conflictChoices = {};
         this._pendingImportNew = [];
+        this._copyDialog = null;
+        this._copied = false;
     }
     _slugify(name) {
         return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "request";
@@ -180,7 +237,7 @@ let RequestList = class RequestList extends i$2 {
     async _exportAll() {
         const data = JSON.stringify({ requests: this.requests }, null, 2);
         const filename = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        await saveJsonFile(filename, data);
+        await saveJsonFile(filename, data, (d, f) => { this._copyDialog = { data: d, filename: f }; });
     }
     async _triggerImport() {
         const file = await pickJsonFile();
@@ -539,6 +596,36 @@ let RequestList = class RequestList extends i$2 {
                   >
                     ${this._importing ? "Importing..." : "Confirm Import"}
                   </button>
+                </div>
+              </div>
+            </div>
+          `
+            : b ``}
+
+      ${this._copyDialog
+            ? b `
+            <div class="copy-dialog-overlay">
+              <div class="copy-dialog-card">
+                <h3>📋 Save Backup Manually</h3>
+                <p>
+                  Your browser couldn't download the file automatically.
+                  Copy the text below and save it as
+                  <strong>${this._copyDialog.filename}</strong>.
+                </p>
+                <textarea readonly .value=${this._copyDialog.data}></textarea>
+                <div class="copy-dialog-actions">
+                  <button
+                    class="copy-dialog-close"
+                    @click=${() => { this._copyDialog = null; this._copied = false; }}
+                  >Close</button>
+                  <button
+                    class="copy-dialog-copy ${this._copied ? "done" : ""}"
+                    @click=${async () => {
+                await navigator.clipboard.writeText(this._copyDialog.data);
+                this._copied = true;
+                setTimeout(() => { this._copied = false; }, 2500);
+            }}
+                  >${this._copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
                 </div>
               </div>
             </div>
@@ -983,6 +1070,70 @@ RequestList.styles = i$5 `
     }
     .conflict-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* ── Copy-fallback dialog ── */
+    .copy-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 120;
+    }
+    .copy-dialog-card {
+      background: var(--card-background-color);
+      border-radius: 10px;
+      padding: 22px;
+      max-width: 500px;
+      width: 94%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .copy-dialog-card h3 { margin: 0; font-size: 16px; }
+    .copy-dialog-card p { margin: 0; font-size: 13px; color: var(--secondary-text-color); }
+    .copy-dialog-card textarea {
+      width: 100%;
+      height: 180px;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: var(--secondary-background-color, #1e1e1e);
+      color: var(--primary-text-color);
+      resize: none;
+      box-sizing: border-box;
+    }
+    .copy-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .copy-dialog-close {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .copy-dialog-copy {
+      padding: 8px 20px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .copy-dialog-copy.done {
+      background: #43a047;
+    }
+
     /* ── Mobile: convert table rows into stacked cards ── */
     @media (max-width: 640px) {
       :host {
@@ -1079,6 +1230,12 @@ __decorate([
 __decorate([
     r()
 ], RequestList.prototype, "_pendingImportNew", void 0);
+__decorate([
+    r()
+], RequestList.prototype, "_copyDialog", void 0);
+__decorate([
+    r()
+], RequestList.prototype, "_copied", void 0);
 RequestList = __decorate([
     t$2("hass-requester-list")
 ], RequestList);
@@ -1581,6 +1738,8 @@ let RequestEditor = class RequestEditor extends i$2 {
         this._testResult = null;
         this._testParams = {};
         this._importFileError = "";
+        this._copyDialog = null;
+        this._copied = false;
         this._showTestDialog = false;
     }
     connectedCallback() {
@@ -1775,7 +1934,7 @@ let RequestEditor = class RequestEditor extends i$2 {
             ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
             : "request.json";
         const data = JSON.stringify(payload, null, 2);
-        await saveJsonFile(filename, data);
+        await saveJsonFile(filename, data, (d, f) => { this._copyDialog = { data: d, filename: f }; });
     }
     async _triggerImportFile() {
         this._importFileError = "";
@@ -2154,6 +2313,36 @@ let RequestEditor = class RequestEditor extends i$2 {
             </div>
           `
             : b ``}
+
+      ${this._copyDialog
+            ? b `
+            <div class="copy-dialog-overlay">
+              <div class="copy-dialog-card">
+                <h3>📋 Save Request Manually</h3>
+                <p>
+                  Your browser couldn't download the file automatically.
+                  Copy the text below and save it as
+                  <strong>${this._copyDialog.filename}</strong>.
+                </p>
+                <textarea readonly .value=${this._copyDialog.data}></textarea>
+                <div class="copy-dialog-actions">
+                  <button
+                    class="copy-dialog-close"
+                    @click=${() => { this._copyDialog = null; this._copied = false; }}
+                  >Close</button>
+                  <button
+                    class="copy-dialog-copy ${this._copied ? "done" : ""}"
+                    @click=${async () => {
+                await navigator.clipboard.writeText(this._copyDialog.data);
+                this._copied = true;
+                setTimeout(() => { this._copied = false; }, 2500);
+            }}
+                  >${this._copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
+                </div>
+              </div>
+            </div>
+          `
+            : b ``}
     `;
     }
 };
@@ -2429,6 +2618,63 @@ RequestEditor.styles = i$5 `
     .test-cancel { padding: 8px 18px; background: none; border: 1px solid var(--divider-color); border-radius: 6px; cursor: pointer; color: var(--primary-text-color); }
     .test-run { padding: 8px 20px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .test-run:disabled { opacity: 0.5; }
+    /* copy-fallback dialog */
+    .copy-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 220;
+    }
+    .copy-dialog-card {
+      background: var(--card-background-color);
+      border-radius: 10px;
+      padding: 22px;
+      max-width: 500px;
+      width: 94%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .copy-dialog-card h3 { margin: 0; font-size: 16px; }
+    .copy-dialog-card p { margin: 0; font-size: 13px; color: var(--secondary-text-color); }
+    .copy-dialog-card textarea {
+      width: 100%;
+      height: 180px;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: var(--secondary-background-color, #1e1e1e);
+      color: var(--primary-text-color);
+      resize: none;
+      box-sizing: border-box;
+    }
+    .copy-dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
+    .copy-dialog-close {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .copy-dialog-copy {
+      padding: 8px 20px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .copy-dialog-copy.done { background: #43a047; }
     .btn-export {
       padding: 8px 16px;
       background: none;
@@ -2520,6 +2766,12 @@ __decorate([
 __decorate([
     r()
 ], RequestEditor.prototype, "_importFileError", void 0);
+__decorate([
+    r()
+], RequestEditor.prototype, "_copyDialog", void 0);
+__decorate([
+    r()
+], RequestEditor.prototype, "_copied", void 0);
 __decorate([
     r()
 ], RequestEditor.prototype, "_showTestDialog", void 0);

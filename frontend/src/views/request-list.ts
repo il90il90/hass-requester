@@ -15,6 +15,8 @@ export class RequestList extends LitElement {
   @state() private _importConflicts: Array<{ incoming: Record<string, unknown>; existing: HassRequest }> = [];
   @state() private _conflictChoices: Record<string, "update" | "skip"> = {};
   @state() private _pendingImportNew: Array<Record<string, unknown>> = [];
+  @state() private _copyDialog: { data: string; filename: string } | null = null;
+  @state() private _copied = false;
 
   static styles = css`
     :host {
@@ -452,6 +454,70 @@ export class RequestList extends LitElement {
     }
     .conflict-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* ── Copy-fallback dialog ── */
+    .copy-dialog-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 120;
+    }
+    .copy-dialog-card {
+      background: var(--card-background-color);
+      border-radius: 10px;
+      padding: 22px;
+      max-width: 500px;
+      width: 94%;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .copy-dialog-card h3 { margin: 0; font-size: 16px; }
+    .copy-dialog-card p { margin: 0; font-size: 13px; color: var(--secondary-text-color); }
+    .copy-dialog-card textarea {
+      width: 100%;
+      height: 180px;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: var(--secondary-background-color, #1e1e1e);
+      color: var(--primary-text-color);
+      resize: none;
+      box-sizing: border-box;
+    }
+    .copy-dialog-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
+    .copy-dialog-close {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--primary-text-color);
+    }
+    .copy-dialog-copy {
+      padding: 8px 20px;
+      background: var(--primary-color);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .copy-dialog-copy.done {
+      background: #43a047;
+    }
+
     /* ── Mobile: convert table rows into stacked cards ── */
     @media (max-width: 640px) {
       :host {
@@ -555,7 +621,7 @@ export class RequestList extends LitElement {
   private async _exportAll() {
     const data = JSON.stringify({ requests: this.requests }, null, 2);
     const filename = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    await saveJsonFile(filename, data);
+    await saveJsonFile(filename, data, (d, f) => { this._copyDialog = { data: d, filename: f }; });
   }
 
   private async _triggerImport() {
@@ -924,6 +990,36 @@ export class RequestList extends LitElement {
                   >
                     ${this._importing ? "Importing..." : "Confirm Import"}
                   </button>
+                </div>
+              </div>
+            </div>
+          `
+        : html``}
+
+      ${this._copyDialog
+        ? html`
+            <div class="copy-dialog-overlay">
+              <div class="copy-dialog-card">
+                <h3>📋 Save Backup Manually</h3>
+                <p>
+                  Your browser couldn't download the file automatically.
+                  Copy the text below and save it as
+                  <strong>${this._copyDialog.filename}</strong>.
+                </p>
+                <textarea readonly .value=${this._copyDialog.data}></textarea>
+                <div class="copy-dialog-actions">
+                  <button
+                    class="copy-dialog-close"
+                    @click=${() => { this._copyDialog = null; this._copied = false; }}
+                  >Close</button>
+                  <button
+                    class="copy-dialog-copy ${this._copied ? "done" : ""}"
+                    @click=${async () => {
+                      await navigator.clipboard.writeText(this._copyDialog!.data);
+                      this._copied = true;
+                      setTimeout(() => { this._copied = false; }, 2500);
+                    }}
+                  >${this._copied ? "✓ Copied!" : "Copy to Clipboard"}</button>
                 </div>
               </div>
             </div>
