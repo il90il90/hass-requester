@@ -35,6 +35,7 @@ export class RequestEditor extends LitElement {
   @state() private _error = "";
   @state() private _testResult: { success: boolean; message: string } | null = null;
   @state() private _testParams: Record<string, string> = {};
+  @state() private _importFileError = "";
 
   static styles = css`
     :host {
@@ -308,6 +309,42 @@ export class RequestEditor extends LitElement {
     .test-cancel { padding: 8px 18px; background: none; border: 1px solid var(--divider-color); border-radius: 6px; cursor: pointer; color: var(--primary-text-color); }
     .test-run { padding: 8px 20px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .test-run:disabled { opacity: 0.5; }
+    .btn-export {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      color: var(--primary-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .btn-export:hover {
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08);
+    }
+    .btn-import {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .btn-import:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+    .import-file-error {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      background: rgba(219, 68, 55, 0.12);
+      color: var(--error-color, #db4437);
+      border: 1px solid rgba(219, 68, 55, 0.3);
+    }
   `;
 
   connectedCallback() {
@@ -516,6 +553,57 @@ export class RequestEditor extends LitElement {
     return String(err["message"] ?? err["error"] ?? "Failed to save request");
   }
 
+  private _exportRequest() {
+    const payload = this._buildPayload();
+    const filename = payload.name
+      ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
+      : "request.json";
+    const data = JSON.stringify(payload, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private _triggerImportFile() {
+    const input = this.shadowRoot?.querySelector<HTMLInputElement>("#editor-import-file");
+    input?.click();
+  }
+
+  private async _onImportFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = "";
+    this._importFileError = "";
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as Partial<HassRequest>;
+      // Support both single request object and { requests: [...] } wrapping
+      const req: Partial<HassRequest> = Array.isArray((parsed as Record<string, unknown>)?.requests)
+        ? ((parsed as Record<string, unknown>).requests as HassRequest[])[0]
+        : parsed;
+      if (!req?.url && !req?.method) throw new Error("Not a valid request file.");
+      this._populateFromRequest({
+        id: "",
+        name: req.name ?? "",
+        method: req.method ?? "GET",
+        url: req.url ?? "",
+        query_params: req.query_params ?? {},
+        headers: req.headers ?? {},
+        body_type: req.body_type ?? "none",
+        body: req.body ?? null,
+        slots: req.slots ?? [],
+      });
+    } catch (err: unknown) {
+      this._importFileError =
+        err instanceof Error ? err.message : "Failed to import request file.";
+    }
+  }
+
   private async _save() {
     if (!this._name.trim()) {
       this._error = "Name is required.";
@@ -590,6 +678,15 @@ export class RequestEditor extends LitElement {
     const hasBody = METHODS_WITH_BODY.includes(this._method);
 
     return html`
+      <!-- Hidden file input for importing a request -->
+      <input
+        id="editor-import-file"
+        type="file"
+        accept=".json,application/json"
+        style="display:none"
+        @change=${this._onImportFile}
+      />
+
       <!-- Header -->
       <div class="header-row">
         <div class="header-title">
@@ -597,12 +694,30 @@ export class RequestEditor extends LitElement {
           <h2>${this.request ? "Edit Request" : "New Request"}</h2>
         </div>
         <div class="header-actions">
+          <button
+            class="btn-import"
+            title="Load request from a JSON file"
+            @click=${this._triggerImportFile}
+          >
+            ↑ Import
+          </button>
+          <button
+            class="btn-export"
+            title="Save this request as a JSON file"
+            @click=${this._exportRequest}
+          >
+            ↓ Export
+          </button>
           <hass-requester-curl-importer
             .hass=${this.hass}
             @curl-parsed=${this._onCurlParsed}
           ></hass-requester-curl-importer>
         </div>
       </div>
+
+      ${this._importFileError
+        ? html`<div class="import-file-error">${this._importFileError}</div>`
+        : html``}
 
       <!-- Basic Info -->
       <div class="card">

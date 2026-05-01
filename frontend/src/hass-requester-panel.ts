@@ -80,6 +80,10 @@ export class HassRequesterPanel extends LitElement {
     await this._loadRequests();
   }
 
+  private async _onImported() {
+    await this._loadRequests();
+  }
+
   private _onCancelled() {
     this._view = "list";
     this._editingRequest = null;
@@ -102,6 +106,7 @@ export class HassRequesterPanel extends LitElement {
               @new=${this._onNew}
               @edit=${this._onEdit}
               @deleted=${this._onDeleted}
+              @imported=${this._onImported}
             ></hass-requester-list>
           `
         : html`

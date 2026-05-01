@@ -9,6 +9,8 @@ export class RequestList extends LitElement {
   @state() private _confirmDeleteId: string | null = null;
   @state() private _deleting = false;
   @state() private _copiedId: string | null = null;
+  @state() private _importing = false;
+  @state() private _importError = "";
 
   static styles = css`
     :host {
@@ -40,6 +42,12 @@ export class RequestList extends LitElement {
       font-size: 22px;
       color: var(--primary-text-color);
     }
+    .header-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
     .new-btn {
       padding: 8px 20px;
       background: var(--primary-color);
@@ -49,6 +57,52 @@ export class RequestList extends LitElement {
       cursor: pointer;
       font-size: 14px;
       font-weight: 600;
+    }
+    .export-btn {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      color: var(--primary-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .export-btn:hover {
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08);
+    }
+    .import-btn {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .import-btn:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+    .import-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .import-error {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      background: rgba(219, 68, 55, 0.12);
+      color: var(--error-color, #db4437);
+      border: 1px solid rgba(219, 68, 55, 0.3);
     }
     table {
       width: 100%;
@@ -193,8 +247,42 @@ export class RequestList extends LitElement {
       max-width: 380px;
       width: 90%;
     }
-    .confirm-card h3 { margin: 0 0 12px; }
-    .confirm-card p { color: var(--secondary-text-color); margin: 0 0 20px; }
+    .confirm-card h3 { margin: 0 0 14px; font-size: 17px; }
+    .confirm-details {
+      background: var(--secondary-background-color, #f5f5f5);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+    }
+    .confirm-detail-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 4px 0;
+      font-size: 13px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .confirm-detail-row:last-child { border-bottom: none; }
+    .confirm-detail-label {
+      min-width: 54px;
+      font-weight: 700;
+      color: var(--secondary-text-color);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      flex-shrink: 0;
+    }
+    .confirm-url {
+      word-break: break-all;
+      color: var(--primary-text-color);
+      font-size: 12px;
+      font-family: monospace;
+    }
+    .confirm-warning {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      margin: 0 0 18px;
+    }
     .confirm-actions {
       display: flex;
       justify-content: flex-end;
@@ -206,16 +294,20 @@ export class RequestList extends LitElement {
       border: 1px solid var(--divider-color);
       border-radius: 4px;
       cursor: pointer;
+      color: var(--primary-text-color);
+      font-size: 14px;
     }
     .confirm-delete {
-      padding: 8px 16px;
+      padding: 8px 20px;
       background: var(--error-color, #db4437);
       color: white;
       border: none;
       border-radius: 4px;
       cursor: pointer;
       font-weight: 600;
+      font-size: 14px;
     }
+    .confirm-delete:disabled { opacity: 0.6; cursor: not-allowed; }
 
     /* ── Mobile: convert table rows into stacked cards ── */
     @media (max-width: 640px) {
@@ -305,6 +397,54 @@ export class RequestList extends LitElement {
     );
   }
 
+  private _exportAll() {
+    const data = JSON.stringify({ requests: this.requests }, null, 2);
+    const blob = new Blob([data], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  private _triggerImport() {
+    const input = this.shadowRoot?.querySelector<HTMLInputElement>("#import-file-input");
+    input?.click();
+  }
+
+  private async _onImportFile(e: Event) {
+    const input = e.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = "";
+    this._importError = "";
+    this._importing = true;
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      const requests: Array<Record<string, unknown>> = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.requests)
+        ? parsed.requests
+        : null;
+      if (!requests) throw new Error("Invalid backup file format.");
+      let imported = 0;
+      for (const req of requests) {
+        // Strip ID so backend generates a new one
+        const { id: _id, ...payload } = req as Record<string, unknown>;
+        await this.hass.callWS({ type: "hass_requester/create", ...payload });
+        imported++;
+      }
+      this.dispatchEvent(new CustomEvent("imported", { bubbles: true, composed: true }));
+    } catch (err: unknown) {
+      this._importError =
+        err instanceof Error ? err.message : "Failed to import backup file.";
+    } finally {
+      this._importing = false;
+    }
+  }
+
   private async _deleteConfirmed() {
     if (!this._confirmDeleteId) return;
     this._deleting = true;
@@ -324,21 +464,51 @@ export class RequestList extends LitElement {
 
   render() {
     return html`
+      <input
+        id="import-file-input"
+        type="file"
+        accept=".json,application/json"
+        style="display:none"
+        @change=${this._onImportFile}
+      />
+
       <div class="header">
         <div class="header-title">
           <img src="/api/hass_requester/frontend/logo.png" alt="HASS Requester" />
           <h2>HASS Requester</h2>
         </div>
-        <button
-          class="new-btn"
-          @click=${() =>
-            this.dispatchEvent(
-              new CustomEvent("new", { bubbles: true, composed: true })
-            )}
-        >
-          + New Request
-        </button>
+        <div class="header-right">
+          <button
+            class="import-btn"
+            ?disabled=${this._importing}
+            title="Import requests from a backup JSON file"
+            @click=${this._triggerImport}
+          >
+            ↑ ${this._importing ? "Importing..." : "Import"}
+          </button>
+          <button
+            class="export-btn"
+            ?disabled=${this.requests.length === 0}
+            title="Export all requests as a backup JSON file"
+            @click=${this._exportAll}
+          >
+            ↓ Export
+          </button>
+          <button
+            class="new-btn"
+            @click=${() =>
+              this.dispatchEvent(
+                new CustomEvent("new", { bubbles: true, composed: true })
+              )}
+          >
+            + New Request
+          </button>
+        </div>
       </div>
+
+      ${this._importError
+        ? html`<div class="import-error">${this._importError}</div>`
+        : html``}
 
       ${this.requests.length === 0
         ? html`
@@ -421,35 +591,60 @@ export class RequestList extends LitElement {
           `}
 
       ${this._confirmDeleteId
-        ? html`
-            <div class="confirm-overlay">
-              <div class="confirm-card">
-                <h3>Delete Request?</h3>
-                <p>
-                  This will permanently delete
-                  <strong>
-                    ${this.requests.find((r) => r.id === this._confirmDeleteId)?.name}
-                  </strong>.
-                  This action cannot be undone.
-                </p>
-                <div class="confirm-actions">
-                  <button
-                    class="confirm-cancel"
-                    @click=${() => (this._confirmDeleteId = null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    class="confirm-delete"
-                    ?disabled=${this._deleting}
-                    @click=${this._deleteConfirmed}
-                  >
-                    ${this._deleting ? "Deleting..." : "Delete"}
-                  </button>
+        ? (() => {
+            const req = this.requests.find((r) => r.id === this._confirmDeleteId);
+            return html`
+              <div class="confirm-overlay">
+                <div class="confirm-card">
+                  <h3>🗑️ Delete Request?</h3>
+                  ${req
+                    ? html`
+                        <div class="confirm-details">
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">Name</span>
+                            <strong>${req.name}</strong>
+                          </div>
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">Method</span>
+                            <span class="method-badge method-${req.method}">${req.method}</span>
+                          </div>
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">URL</span>
+                            <span class="confirm-url">${req.url}</span>
+                          </div>
+                          ${req.slots.length > 0
+                            ? html`
+                                <div class="confirm-detail-row">
+                                  <span class="confirm-detail-label">Slots</span>
+                                  <span>${req.slots.length} dynamic slot${req.slots.length !== 1 ? "s" : ""}</span>
+                                </div>
+                              `
+                            : html``}
+                        </div>
+                        <p class="confirm-warning">
+                          ⚠️ This action <strong>cannot be undone</strong>. The request and all its configuration will be permanently removed.
+                        </p>
+                      `
+                    : html`<p>This action cannot be undone.</p>`}
+                  <div class="confirm-actions">
+                    <button
+                      class="confirm-cancel"
+                      @click=${() => (this._confirmDeleteId = null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      class="confirm-delete"
+                      ?disabled=${this._deleting}
+                      @click=${this._deleteConfirmed}
+                    >
+                      ${this._deleting ? "Deleting..." : "Yes, Delete"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          `
+            `;
+          })()
         : html``}
     `;
   }

@@ -79,6 +79,8 @@ let RequestList = class RequestList extends i$2 {
         this._confirmDeleteId = null;
         this._deleting = false;
         this._copiedId = null;
+        this._importing = false;
+        this._importError = "";
     }
     _slugify(name) {
         return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "request";
@@ -95,6 +97,55 @@ let RequestList = class RequestList extends i$2 {
             bubbles: true,
             composed: true,
         }));
+    }
+    _exportAll() {
+        const data = JSON.stringify({ requests: this.requests }, null, 2);
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+    _triggerImport() {
+        const input = this.shadowRoot?.querySelector("#import-file-input");
+        input?.click();
+    }
+    async _onImportFile(e) {
+        const input = e.target;
+        const file = input.files?.[0];
+        if (!file)
+            return;
+        input.value = "";
+        this._importError = "";
+        this._importing = true;
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            const requests = Array.isArray(parsed)
+                ? parsed
+                : Array.isArray(parsed?.requests)
+                    ? parsed.requests
+                    : null;
+            if (!requests)
+                throw new Error("Invalid backup file format.");
+            let imported = 0;
+            for (const req of requests) {
+                // Strip ID so backend generates a new one
+                const { id: _id, ...payload } = req;
+                await this.hass.callWS({ type: "hass_requester/create", ...payload });
+                imported++;
+            }
+            this.dispatchEvent(new CustomEvent("imported", { bubbles: true, composed: true }));
+        }
+        catch (err) {
+            this._importError =
+                err instanceof Error ? err.message : "Failed to import backup file.";
+        }
+        finally {
+            this._importing = false;
+        }
     }
     async _deleteConfirmed() {
         if (!this._confirmDeleteId)
@@ -114,18 +165,48 @@ let RequestList = class RequestList extends i$2 {
     }
     render() {
         return b `
+      <input
+        id="import-file-input"
+        type="file"
+        accept=".json,application/json"
+        style="display:none"
+        @change=${this._onImportFile}
+      />
+
       <div class="header">
         <div class="header-title">
           <img src="/api/hass_requester/frontend/logo.png" alt="HASS Requester" />
           <h2>HASS Requester</h2>
         </div>
-        <button
-          class="new-btn"
-          @click=${() => this.dispatchEvent(new CustomEvent("new", { bubbles: true, composed: true }))}
-        >
-          + New Request
-        </button>
+        <div class="header-right">
+          <button
+            class="import-btn"
+            ?disabled=${this._importing}
+            title="Import requests from a backup JSON file"
+            @click=${this._triggerImport}
+          >
+            ↑ ${this._importing ? "Importing..." : "Import"}
+          </button>
+          <button
+            class="export-btn"
+            ?disabled=${this.requests.length === 0}
+            title="Export all requests as a backup JSON file"
+            @click=${this._exportAll}
+          >
+            ↓ Export
+          </button>
+          <button
+            class="new-btn"
+            @click=${() => this.dispatchEvent(new CustomEvent("new", { bubbles: true, composed: true }))}
+          >
+            + New Request
+          </button>
+        </div>
       </div>
+
+      ${this._importError
+            ? b `<div class="import-error">${this._importError}</div>`
+            : b ``}
 
       ${this.requests.length === 0
             ? b `
@@ -203,35 +284,60 @@ let RequestList = class RequestList extends i$2 {
           `}
 
       ${this._confirmDeleteId
-            ? b `
-            <div class="confirm-overlay">
-              <div class="confirm-card">
-                <h3>Delete Request?</h3>
-                <p>
-                  This will permanently delete
-                  <strong>
-                    ${this.requests.find((r) => r.id === this._confirmDeleteId)?.name}
-                  </strong>.
-                  This action cannot be undone.
-                </p>
-                <div class="confirm-actions">
-                  <button
-                    class="confirm-cancel"
-                    @click=${() => (this._confirmDeleteId = null)}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    class="confirm-delete"
-                    ?disabled=${this._deleting}
-                    @click=${this._deleteConfirmed}
-                  >
-                    ${this._deleting ? "Deleting..." : "Delete"}
-                  </button>
+            ? (() => {
+                const req = this.requests.find((r) => r.id === this._confirmDeleteId);
+                return b `
+              <div class="confirm-overlay">
+                <div class="confirm-card">
+                  <h3>🗑️ Delete Request?</h3>
+                  ${req
+                    ? b `
+                        <div class="confirm-details">
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">Name</span>
+                            <strong>${req.name}</strong>
+                          </div>
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">Method</span>
+                            <span class="method-badge method-${req.method}">${req.method}</span>
+                          </div>
+                          <div class="confirm-detail-row">
+                            <span class="confirm-detail-label">URL</span>
+                            <span class="confirm-url">${req.url}</span>
+                          </div>
+                          ${req.slots.length > 0
+                        ? b `
+                                <div class="confirm-detail-row">
+                                  <span class="confirm-detail-label">Slots</span>
+                                  <span>${req.slots.length} dynamic slot${req.slots.length !== 1 ? "s" : ""}</span>
+                                </div>
+                              `
+                        : b ``}
+                        </div>
+                        <p class="confirm-warning">
+                          ⚠️ This action <strong>cannot be undone</strong>. The request and all its configuration will be permanently removed.
+                        </p>
+                      `
+                    : b `<p>This action cannot be undone.</p>`}
+                  <div class="confirm-actions">
+                    <button
+                      class="confirm-cancel"
+                      @click=${() => (this._confirmDeleteId = null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      class="confirm-delete"
+                      ?disabled=${this._deleting}
+                      @click=${this._deleteConfirmed}
+                    >
+                      ${this._deleting ? "Deleting..." : "Yes, Delete"}
+                    </button>
+                  </div>
                 </div>
               </div>
-            </div>
-          `
+            `;
+            })()
             : b ``}
     `;
     }
@@ -266,6 +372,12 @@ RequestList.styles = i$5 `
       font-size: 22px;
       color: var(--primary-text-color);
     }
+    .header-right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
     .new-btn {
       padding: 8px 20px;
       background: var(--primary-color);
@@ -275,6 +387,52 @@ RequestList.styles = i$5 `
       cursor: pointer;
       font-size: 14px;
       font-weight: 600;
+    }
+    .export-btn {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      color: var(--primary-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .export-btn:hover {
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08);
+    }
+    .import-btn {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .import-btn:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+    .import-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .import-error {
+      margin-top: 10px;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      background: rgba(219, 68, 55, 0.12);
+      color: var(--error-color, #db4437);
+      border: 1px solid rgba(219, 68, 55, 0.3);
     }
     table {
       width: 100%;
@@ -419,8 +577,42 @@ RequestList.styles = i$5 `
       max-width: 380px;
       width: 90%;
     }
-    .confirm-card h3 { margin: 0 0 12px; }
-    .confirm-card p { color: var(--secondary-text-color); margin: 0 0 20px; }
+    .confirm-card h3 { margin: 0 0 14px; font-size: 17px; }
+    .confirm-details {
+      background: var(--secondary-background-color, #f5f5f5);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+    }
+    .confirm-detail-row {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      padding: 4px 0;
+      font-size: 13px;
+      border-bottom: 1px solid var(--divider-color);
+    }
+    .confirm-detail-row:last-child { border-bottom: none; }
+    .confirm-detail-label {
+      min-width: 54px;
+      font-weight: 700;
+      color: var(--secondary-text-color);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      flex-shrink: 0;
+    }
+    .confirm-url {
+      word-break: break-all;
+      color: var(--primary-text-color);
+      font-size: 12px;
+      font-family: monospace;
+    }
+    .confirm-warning {
+      font-size: 13px;
+      color: var(--secondary-text-color);
+      margin: 0 0 18px;
+    }
     .confirm-actions {
       display: flex;
       justify-content: flex-end;
@@ -432,16 +624,20 @@ RequestList.styles = i$5 `
       border: 1px solid var(--divider-color);
       border-radius: 4px;
       cursor: pointer;
+      color: var(--primary-text-color);
+      font-size: 14px;
     }
     .confirm-delete {
-      padding: 8px 16px;
+      padding: 8px 20px;
       background: var(--error-color, #db4437);
       color: white;
       border: none;
       border-radius: 4px;
       cursor: pointer;
       font-weight: 600;
+      font-size: 14px;
     }
+    .confirm-delete:disabled { opacity: 0.6; cursor: not-allowed; }
 
     /* ── Mobile: convert table rows into stacked cards ── */
     @media (max-width: 640px) {
@@ -524,6 +720,12 @@ __decorate([
 __decorate([
     r()
 ], RequestList.prototype, "_copiedId", void 0);
+__decorate([
+    r()
+], RequestList.prototype, "_importing", void 0);
+__decorate([
+    r()
+], RequestList.prototype, "_importError", void 0);
 RequestList = __decorate([
     t$2("hass-requester-list")
 ], RequestList);
@@ -1025,6 +1227,7 @@ let RequestEditor = class RequestEditor extends i$2 {
         this._error = "";
         this._testResult = null;
         this._testParams = {};
+        this._importFileError = "";
         this._showTestDialog = false;
     }
     connectedCallback() {
@@ -1213,6 +1416,57 @@ let RequestEditor = class RequestEditor extends i$2 {
         const err = e;
         return String(err["message"] ?? err["error"] ?? "Failed to save request");
     }
+    _exportRequest() {
+        const payload = this._buildPayload();
+        const filename = payload.name
+            ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
+            : "request.json";
+        const data = JSON.stringify(payload, null, 2);
+        const blob = new Blob([data], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+    _triggerImportFile() {
+        const input = this.shadowRoot?.querySelector("#editor-import-file");
+        input?.click();
+    }
+    async _onImportFile(e) {
+        const input = e.target;
+        const file = input.files?.[0];
+        if (!file)
+            return;
+        input.value = "";
+        this._importFileError = "";
+        try {
+            const text = await file.text();
+            const parsed = JSON.parse(text);
+            // Support both single request object and { requests: [...] } wrapping
+            const req = Array.isArray(parsed?.requests)
+                ? parsed.requests[0]
+                : parsed;
+            if (!req?.url && !req?.method)
+                throw new Error("Not a valid request file.");
+            this._populateFromRequest({
+                id: "",
+                name: req.name ?? "",
+                method: req.method ?? "GET",
+                url: req.url ?? "",
+                query_params: req.query_params ?? {},
+                headers: req.headers ?? {},
+                body_type: req.body_type ?? "none",
+                body: req.body ?? null,
+                slots: req.slots ?? [],
+            });
+        }
+        catch (err) {
+            this._importFileError =
+                err instanceof Error ? err.message : "Failed to import request file.";
+        }
+    }
     async _save() {
         if (!this._name.trim()) {
             this._error = "Name is required.";
@@ -1284,6 +1538,15 @@ let RequestEditor = class RequestEditor extends i$2 {
     render() {
         const hasBody = METHODS_WITH_BODY.includes(this._method);
         return b `
+      <!-- Hidden file input for importing a request -->
+      <input
+        id="editor-import-file"
+        type="file"
+        accept=".json,application/json"
+        style="display:none"
+        @change=${this._onImportFile}
+      />
+
       <!-- Header -->
       <div class="header-row">
         <div class="header-title">
@@ -1291,12 +1554,30 @@ let RequestEditor = class RequestEditor extends i$2 {
           <h2>${this.request ? "Edit Request" : "New Request"}</h2>
         </div>
         <div class="header-actions">
+          <button
+            class="btn-import"
+            title="Load request from a JSON file"
+            @click=${this._triggerImportFile}
+          >
+            ↑ Import
+          </button>
+          <button
+            class="btn-export"
+            title="Save this request as a JSON file"
+            @click=${this._exportRequest}
+          >
+            ↓ Export
+          </button>
           <hass-requester-curl-importer
             .hass=${this.hass}
             @curl-parsed=${this._onCurlParsed}
           ></hass-requester-curl-importer>
         </div>
       </div>
+
+      ${this._importFileError
+            ? b `<div class="import-file-error">${this._importFileError}</div>`
+            : b ``}
 
       <!-- Basic Info -->
       <div class="card">
@@ -1816,6 +2097,42 @@ RequestEditor.styles = i$5 `
     .test-cancel { padding: 8px 18px; background: none; border: 1px solid var(--divider-color); border-radius: 6px; cursor: pointer; color: var(--primary-text-color); }
     .test-run { padding: 8px 20px; background: #ff9800; color: white; border: none; border-radius: 6px; cursor: pointer; font-weight: 600; }
     .test-run:disabled { opacity: 0.5; }
+    .btn-export {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--primary-color);
+      border-radius: 6px;
+      color: var(--primary-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .btn-export:hover {
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08);
+    }
+    .btn-import {
+      padding: 8px 16px;
+      background: none;
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .btn-import:hover {
+      border-color: var(--primary-color);
+      color: var(--primary-color);
+    }
+    .import-file-error {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      background: rgba(219, 68, 55, 0.12);
+      color: var(--error-color, #db4437);
+      border: 1px solid rgba(219, 68, 55, 0.3);
+    }
   `;
 __decorate([
     n({ attribute: false })
@@ -1870,6 +2187,9 @@ __decorate([
 ], RequestEditor.prototype, "_testParams", void 0);
 __decorate([
     r()
+], RequestEditor.prototype, "_importFileError", void 0);
+__decorate([
+    r()
 ], RequestEditor.prototype, "_showTestDialog", void 0);
 RequestEditor = __decorate([
     t$2("hass-requester-editor")
@@ -1921,6 +2241,9 @@ let HassRequesterPanel = class HassRequesterPanel extends i$2 {
     async _onDeleted() {
         await this._loadRequests();
     }
+    async _onImported() {
+        await this._loadRequests();
+    }
     _onCancelled() {
         this._view = "list";
         this._editingRequest = null;
@@ -1941,6 +2264,7 @@ let HassRequesterPanel = class HassRequesterPanel extends i$2 {
               @new=${this._onNew}
               @edit=${this._onEdit}
               @deleted=${this._onDeleted}
+              @imported=${this._onImported}
             ></hass-requester-list>
           `
             : b `
