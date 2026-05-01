@@ -8,6 +8,7 @@ export class RequestList extends LitElement {
   @property({ attribute: false }) requests: HassRequest[] = [];
   @state() private _confirmDeleteId: string | null = null;
   @state() private _deleting = false;
+  @state() private _copiedId: string | null = null;
 
   static styles = css`
     :host {
@@ -112,6 +113,36 @@ export class RequestList extends LitElement {
       padding: 1px 8px;
       font-size: 12px;
       color: var(--secondary-text-color);
+    }
+    .name-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--secondary-text-color);
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, background 0.15s;
+      flex-shrink: 0;
+    }
+    tr:hover .copy-btn {
+      opacity: 1;
+    }
+    .copy-btn:hover {
+      color: var(--primary-color);
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1);
+    }
+    .copy-btn.copied {
+      opacity: 1;
+      color: #43a047;
     }
     .actions {
       display: flex;
@@ -247,8 +278,22 @@ export class RequestList extends LitElement {
         padding: 8px 20px;
         font-size: 13px;
       }
+      .copy-btn {
+        opacity: 1;
+      }
     }
   `;
+
+  private _slugify(name: string): string {
+    return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "request";
+  }
+
+  private async _copy(req: HassRequest) {
+    const svcName = `hass_requester.${this._slugify(req.name)}`;
+    await navigator.clipboard.writeText(svcName);
+    this._copiedId = req.id;
+    setTimeout(() => { this._copiedId = null; }, 2000);
+  }
 
   private _edit(request: HassRequest) {
     this.dispatchEvent(
@@ -321,7 +366,20 @@ export class RequestList extends LitElement {
                 ${this.requests.map(
                   (req) => html`
                     <tr>
-                      <td data-label="Name"><strong>${req.name}</strong></td>
+                      <td data-label="Name">
+                        <div class="name-cell">
+                          <strong>${req.name}</strong>
+                          <button
+                            class="copy-btn ${this._copiedId === req.id ? "copied" : ""}"
+                            title="Copy: hass_requester.${this._slugify(req.name)}"
+                            @click=${(e: Event) => { e.stopPropagation(); this._copy(req); }}
+                          >
+                            ${this._copiedId === req.id
+                              ? html`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+                              : html`<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`}
+                          </button>
+                        </div>
+                      </td>
                       <td data-label="Method">
                         <span class="method-badge method-${req.method}">
                           ${req.method}

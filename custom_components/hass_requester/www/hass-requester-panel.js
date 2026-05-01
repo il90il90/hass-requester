@@ -78,6 +78,16 @@ let RequestList = class RequestList extends i$2 {
         this.requests = [];
         this._confirmDeleteId = null;
         this._deleting = false;
+        this._copiedId = null;
+    }
+    _slugify(name) {
+        return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "request";
+    }
+    async _copy(req) {
+        const svcName = `hass_requester.${this._slugify(req.name)}`;
+        await navigator.clipboard.writeText(svcName);
+        this._copiedId = req.id;
+        setTimeout(() => { this._copiedId = null; }, 2000);
     }
     _edit(request) {
         this.dispatchEvent(new CustomEvent("edit", {
@@ -141,7 +151,20 @@ let RequestList = class RequestList extends i$2 {
               <tbody>
                 ${this.requests.map((req) => b `
                     <tr>
-                      <td data-label="Name"><strong>${req.name}</strong></td>
+                      <td data-label="Name">
+                        <div class="name-cell">
+                          <strong>${req.name}</strong>
+                          <button
+                            class="copy-btn ${this._copiedId === req.id ? "copied" : ""}"
+                            title="Copy: hass_requester.${this._slugify(req.name)}"
+                            @click=${(e) => { e.stopPropagation(); this._copy(req); }}
+                          >
+                            ${this._copiedId === req.id
+                ? b `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>`
+                : b `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`}
+                          </button>
+                        </div>
+                      </td>
                       <td data-label="Method">
                         <span class="method-badge method-${req.method}">
                           ${req.method}
@@ -317,6 +340,36 @@ RequestList.styles = i$5 `
       font-size: 12px;
       color: var(--secondary-text-color);
     }
+    .name-cell {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 3px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--secondary-text-color);
+      border-radius: 4px;
+      opacity: 0;
+      transition: opacity 0.15s, color 0.15s, background 0.15s;
+      flex-shrink: 0;
+    }
+    tr:hover .copy-btn {
+      opacity: 1;
+    }
+    .copy-btn:hover {
+      color: var(--primary-color);
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.1);
+    }
+    .copy-btn.copied {
+      opacity: 1;
+      color: #43a047;
+    }
     .actions {
       display: flex;
       gap: 8px;
@@ -451,6 +504,9 @@ RequestList.styles = i$5 `
         padding: 8px 20px;
         font-size: 13px;
       }
+      .copy-btn {
+        opacity: 1;
+      }
     }
   `;
 __decorate([
@@ -465,6 +521,9 @@ __decorate([
 __decorate([
     r()
 ], RequestList.prototype, "_deleting", void 0);
+__decorate([
+    r()
+], RequestList.prototype, "_copiedId", void 0);
 RequestList = __decorate([
     t$2("hass-requester-list")
 ], RequestList);
