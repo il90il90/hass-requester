@@ -72,6 +72,71 @@ const t$2=t=>(e,o)=>{ void 0!==o?o.addInitializer(()=>{customElements.define(t,e
  * SPDX-License-Identifier: BSD-3-Clause
  */function r(r){return n({...r,state:true,attribute:false})}
 
+/**
+ * Save JSON data as a file. On mobile browsers (iOS Safari, etc.) that don't
+ * support the `download` attribute, falls back to the Web Share API so the
+ * user can save/share the file via the native sheet.
+ */
+async function saveJsonFile(filename, data) {
+    const blob = new Blob([data], { type: "application/json" });
+    // Try Web Share API first (works reliably on mobile — iOS 15+, Android)
+    if (typeof navigator.share === "function") {
+        try {
+            const file = new File([blob], filename, { type: "application/json" });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: filename });
+                return;
+            }
+        }
+        catch (err) {
+            // User cancelled share or share failed — fall through to blob download
+            if (err instanceof Error && err.name === "AbortError")
+                return;
+        }
+    }
+    // Desktop fallback: append link to body so iOS WKWebView / old browsers work
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    // Small delay before cleanup so the browser has time to start the download
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 200);
+}
+/**
+ * Open a native file-picker and return the selected File.
+ * Works inside Shadow DOM by appending the input to document.body.
+ */
+function pickJsonFile() {
+    return new Promise((resolve) => {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json,application/json";
+        input.style.display = "none";
+        document.body.appendChild(input);
+        input.addEventListener("change", () => {
+            const file = input.files?.[0] ?? null;
+            document.body.removeChild(input);
+            resolve(file);
+        }, { once: true });
+        // If user cancels without picking (focus returns to window)
+        window.addEventListener("focus", () => {
+            setTimeout(() => {
+                if (document.body.contains(input)) {
+                    document.body.removeChild(input);
+                    resolve(null);
+                }
+            }, 500);
+        }, { once: true });
+        input.click();
+    });
+}
+
 let RequestList = class RequestList extends i$2 {
     constructor() {
         super(...arguments);
@@ -112,26 +177,15 @@ let RequestList = class RequestList extends i$2 {
         }
         return true;
     }
-    _exportAll() {
+    async _exportAll() {
         const data = JSON.stringify({ requests: this.requests }, null, 2);
-        const blob = new Blob([data], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const filename = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
+        await saveJsonFile(filename, data);
     }
-    _triggerImport() {
-        const input = this.shadowRoot?.querySelector("#import-file-input");
-        input?.click();
-    }
-    async _onImportFile(e) {
-        const input = e.target;
-        const file = input.files?.[0];
+    async _triggerImport() {
+        const file = await pickJsonFile();
         if (!file)
             return;
-        input.value = "";
         this._importError = "";
         try {
             const text = await file.text();
@@ -246,14 +300,6 @@ let RequestList = class RequestList extends i$2 {
     }
     render() {
         return b `
-      <input
-        id="import-file-input"
-        type="file"
-        accept=".json,application/json"
-        style="display:none"
-        @change=${this._onImportFile}
-      />
-
       <div class="header">
         <div class="header-title">
           <img src="/api/hass_requester/frontend/logo.png" alt="HASS Requester" />
@@ -1723,31 +1769,19 @@ let RequestEditor = class RequestEditor extends i$2 {
         const err = e;
         return String(err["message"] ?? err["error"] ?? "Failed to save request");
     }
-    _exportRequest() {
+    async _exportRequest() {
         const payload = this._buildPayload();
         const filename = payload.name
             ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
             : "request.json";
         const data = JSON.stringify(payload, null, 2);
-        const blob = new Blob([data], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
+        await saveJsonFile(filename, data);
     }
-    _triggerImportFile() {
-        const input = this.shadowRoot?.querySelector("#editor-import-file");
-        input?.click();
-    }
-    async _onImportFile(e) {
-        const input = e.target;
-        const file = input.files?.[0];
+    async _triggerImportFile() {
+        this._importFileError = "";
+        const file = await pickJsonFile();
         if (!file)
             return;
-        input.value = "";
-        this._importFileError = "";
         try {
             const text = await file.text();
             const parsed = JSON.parse(text);
@@ -1845,15 +1879,6 @@ let RequestEditor = class RequestEditor extends i$2 {
     render() {
         const hasBody = METHODS_WITH_BODY.includes(this._method);
         return b `
-      <!-- Hidden file input for importing a request -->
-      <input
-        id="editor-import-file"
-        type="file"
-        accept=".json,application/json"
-        style="display:none"
-        @change=${this._onImportFile}
-      />
-
       <!-- Header -->
       <div class="header-row">
         <div class="header-title">

@@ -10,6 +10,7 @@ import type {
 } from "../types";
 import "../components/curl-importer";
 import "../components/slot-editor";
+import { saveJsonFile, pickJsonFile } from "../utils/download";
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 const BODY_TYPES: BodyType[] = ["none", "json", "form", "text"];
@@ -553,32 +554,19 @@ export class RequestEditor extends LitElement {
     return String(err["message"] ?? err["error"] ?? "Failed to save request");
   }
 
-  private _exportRequest() {
+  private async _exportRequest() {
     const payload = this._buildPayload();
     const filename = payload.name
       ? payload.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") + ".json"
       : "request.json";
     const data = JSON.stringify(payload, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    await saveJsonFile(filename, data);
   }
 
-  private _triggerImportFile() {
-    const input = this.shadowRoot?.querySelector<HTMLInputElement>("#editor-import-file");
-    input?.click();
-  }
-
-  private async _onImportFile(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    input.value = "";
+  private async _triggerImportFile() {
     this._importFileError = "";
+    const file = await pickJsonFile();
+    if (!file) return;
     try {
       const text = await file.text();
       const parsed = JSON.parse(text) as Partial<HassRequest>;
@@ -678,15 +666,6 @@ export class RequestEditor extends LitElement {
     const hasBody = METHODS_WITH_BODY.includes(this._method);
 
     return html`
-      <!-- Hidden file input for importing a request -->
-      <input
-        id="editor-import-file"
-        type="file"
-        accept=".json,application/json"
-        style="display:none"
-        @change=${this._onImportFile}
-      />
-
       <!-- Header -->
       <div class="header-row">
         <div class="header-title">

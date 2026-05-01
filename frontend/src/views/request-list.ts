@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import type { HassRequest, HomeAssistant } from "../types";
+import { saveJsonFile, pickJsonFile } from "../utils/download";
 
 @customElement("hass-requester-list")
 export class RequestList extends LitElement {
@@ -551,27 +552,15 @@ export class RequestList extends LitElement {
     return true;
   }
 
-  private _exportAll() {
+  private async _exportAll() {
     const data = JSON.stringify({ requests: this.requests }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const filename = `hass-requester-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    await saveJsonFile(filename, data);
   }
 
-  private _triggerImport() {
-    const input = this.shadowRoot?.querySelector<HTMLInputElement>("#import-file-input");
-    input?.click();
-  }
-
-  private async _onImportFile(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
+  private async _triggerImport() {
+    const file = await pickJsonFile();
     if (!file) return;
-    input.value = "";
     this._importError = "";
     try {
       const text = await file.text();
@@ -688,14 +677,6 @@ export class RequestList extends LitElement {
 
   render() {
     return html`
-      <input
-        id="import-file-input"
-        type="file"
-        accept=".json,application/json"
-        style="display:none"
-        @change=${this._onImportFile}
-      />
-
       <div class="header">
         <div class="header-title">
           <img src="/api/hass_requester/frontend/logo.png" alt="HASS Requester" />
