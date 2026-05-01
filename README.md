@@ -20,6 +20,7 @@ Send HTTP requests from Home Assistant automations with a beautiful panel UI and
 - **Full Headers & Body** — JSON, Form, Text body types supported
 - **Jinja2 Templates** — Use HA state values and trigger data anywhere in the request
 - **Automation UI** — Each request appears as a dedicated service with labeled slot fields
+- **Template Slot Values** — Pass `{{ states('sensor.x') }}` as a slot value — it is resolved before the request is sent
 
 ---
 
@@ -85,28 +86,47 @@ Open the **Requester** panel → **New Request**
 
 ### 2. Call from Automation — Two Ways
 
-#### Option A: Guided UI (recommended)
+#### Option A: Per-request service — guided UI (recommended)
 
-In the automation editor, search for **`Requester:`** and pick your request directly.
-Each slot appears as a labeled field with examples:
+Each saved request automatically registers a dedicated service.
+Search for **`Requester:`** in the automation editor action picker.
+Every slot appears as a labeled field — accepts static values or any HA template:
 
 ```yaml
 action:
-  - action: hass_requester.testisrael
+  - action: hass_requester.person_arrived
     data:
-      location: "{{ trigger.event.data.location }}"
+      person_name: "{{ trigger.event.data.name }}"   # resolved before sending
+      location: "{{ states('zone.home') }}"
 ```
 
-#### Option B: Generic service with YAML params
+The slot value templates are resolved by HASS Requester **before** the HTTP request
+is built, so the final URL / body always contains the real value.
+
+#### Option B: Generic `send` service with YAML params
 
 ```yaml
 action:
   - action: hass_requester.send
     data:
-      request: my_request       # name of the saved request
+      request: person_arrived       # name of the saved request
       params:
-        location: "Tel Aviv"    # static value
-        city: "{{ states('input_text.city') }}"  # dynamic HA template
+        person_name: "John"         # static value
+        location: "{{ states('input_text.last_location') }}"  # dynamic HA template
+```
+
+#### Option C: Lovelace card button
+
+Because slot values are rendered server-side you can reference `input_text`,
+`input_select`, or any other entity directly from a dashboard button:
+
+```yaml
+tap_action:
+  action: call-service
+  service: hass_requester.person_arrived
+  service_data:
+    person_name: "{{ states('input_text.person_name') }}"
+    location: home
 ```
 
 ---
@@ -130,28 +150,67 @@ rest_command:
 # https://api.example.com/notify?location={{ location }}
 
 action:
-  - action: hass_requester.send
+  - action: hass_requester.person_arrived
     data:
-      request: person_arrived
-      params:
-        location: "{{ trigger.event.data.location }}"
+      location: "{{ trigger.event.data.location }}"
 ```
+
+Or from a **Lovelace button** (e.g. a Grid card):
+
+```yaml
+tap_action:
+  action: call-service
+  service: hass_requester.person_arrived
+  service_data:
+    location: "{{ states('input_text.current_location') }}"
+```
+
+---
+
+## How slot template rendering works
+
+When you pass a slot value that contains a Jinja2 template string, HASS Requester
+resolves it using Home Assistant's template engine **before** constructing the HTTP request.
+
+```
+service_data:
+  person_name: "{{ states('input_text.person_name') }}"
+         │
+         │  resolved by hass_requester
+         ▼
+  person_name: "John"
+         │
+         │  injected into URL / body template
+         ▼
+  https://api.example.com/notify?name=John
+```
+
+This means you can use the full HA template language anywhere:
+
+| Use case | Example value |
+|---|---|
+| Entity state | `"{{ states('sensor.front_door') }}"` |
+| Attribute | `"{{ state_attr('device_tracker.phone', 'latitude') }}"` |
+| Trigger data | `"{{ trigger.event.data.name }}"` |
+| Input helper | `"{{ states('input_text.api_token') }}"` |
+| Computed value | `"{{ (now().timestamp() \| int) }}"` |
 
 ---
 
 ## Service Reference
 
+### `hass_requester.<request_name>` (per-request, guided — recommended)
+
+Each saved request automatically registers its own service with a labeled field per slot.
+Search for `Requester:` in the automation editor action picker.
+Slot values support HA templates — they are resolved server-side before the request is sent.
+
 ### `hass_requester.send` (advanced / generic)
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `request` | string | yes | Name of the saved request |
+| `request` | string | yes | Name or ID of the saved request |
 | `params` | object | no | Key-value pairs for dynamic slots. Supports HA templates. |
-
-### `hass_requester.<request_name>` (per-request, guided)
-
-Each saved request automatically registers its own service with a labeled field per slot.
-Search for `Requester:` in the automation editor action picker.
 
 ---
 
