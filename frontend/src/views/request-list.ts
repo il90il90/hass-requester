@@ -693,7 +693,7 @@ export class RequestList extends LitElement {
             title="Import requests from a backup JSON file"
             @click=${this._triggerImport}
           >
-            ↑ ${this._importing ? "Importing..." : "Import"}
+            ↓ ${this._importing ? "Importing..." : "Import"}
           </button>
           <button
             class="export-btn"
@@ -701,7 +701,7 @@ export class RequestList extends LitElement {
             title="Export all requests as a backup JSON file"
             @click=${this._exportAll}
           >
-            ↓ Export
+            ↑ Export
           </button>
           <button
             class="new-btn"

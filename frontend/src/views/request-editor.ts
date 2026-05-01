@@ -699,14 +699,14 @@ export class RequestEditor extends LitElement {
             title="Load request from a JSON file"
             @click=${this._triggerImportFile}
           >
-            ↑ Import
+            ↓ Import
           </button>
           <button
             class="btn-export"
             title="Save this request as a JSON file"
             @click=${this._exportRequest}
           >
-            ↓ Export
+            ↑ Export
           </button>
           <hass-requester-curl-importer
             .hass=${this.hass}

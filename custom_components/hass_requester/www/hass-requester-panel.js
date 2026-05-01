@@ -252,7 +252,7 @@ let RequestList = class RequestList extends i$2 {
             title="Import requests from a backup JSON file"
             @click=${this._triggerImport}
           >
-            ↑ ${this._importing ? "Importing..." : "Import"}
+            ↓ ${this._importing ? "Importing..." : "Import"}
           </button>
           <button
             class="export-btn"
@@ -260,7 +260,7 @@ let RequestList = class RequestList extends i$2 {
             title="Export all requests as a backup JSON file"
             @click=${this._exportAll}
           >
-            ↓ Export
+            ↑ Export
           </button>
           <button
             class="new-btn"
@@ -1852,14 +1852,14 @@ let RequestEditor = class RequestEditor extends i$2 {
             title="Load request from a JSON file"
             @click=${this._triggerImportFile}
           >
-            ↑ Import
+            ↓ Import
           </button>
           <button
             class="btn-export"
             title="Save this request as a JSON file"
             @click=${this._exportRequest}
           >
-            ↓ Export
+            ↑ Export
           </button>
           <hass-requester-curl-importer
             .hass=${this.hass}
