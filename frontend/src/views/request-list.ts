@@ -539,6 +539,18 @@ export class RequestList extends LitElement {
     );
   }
 
+  private _isIdentical(incoming: Record<string, unknown>, existing: HassRequest): boolean {
+    const fields: Array<keyof HassRequest> = [
+      "name", "method", "url", "query_params", "headers", "body_type", "body", "slots",
+    ];
+    for (const field of fields) {
+      if (JSON.stringify(incoming[field] ?? null) !== JSON.stringify(existing[field] ?? null)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   private _exportAll() {
     const data = JSON.stringify({ requests: this.requests }, null, 2);
     const blob = new Blob([data], { type: "application/json" });
@@ -580,14 +592,17 @@ export class RequestList extends LitElement {
           (r) => r.name.toLowerCase() === incomingName
         );
         if (existing) {
-          conflicts.push({ incoming: req, existing });
+          // Identical content — silently skip, no need to ask
+          if (!this._isIdentical(req, existing)) {
+            conflicts.push({ incoming: req, existing });
+          }
         } else {
           newRequests.push(req);
         }
       }
 
       if (conflicts.length === 0) {
-        // No conflicts — import directly
+        // No real conflicts — import new requests directly
         this._importing = true;
         for (const req of newRequests) {
           const { id: _id, ...payload } = req;
@@ -595,7 +610,7 @@ export class RequestList extends LitElement {
         }
         this.dispatchEvent(new CustomEvent("imported", { bubbles: true, composed: true }));
       } else {
-        // Store state and show conflict dialog
+        // Store state and show conflict dialog for changed requests only
         this._pendingImportNew = newRequests;
         this._importConflicts = conflicts;
         // Default choice: update all
