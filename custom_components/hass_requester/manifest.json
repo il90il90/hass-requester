@@ -1,12 +1,12 @@
 {
   "domain": "hass_requester",
   "name": "HASS Requester",
-  "version": "1.0.0",
-  "documentation": "https://github.com/il90il90/hass-requester",
-  "issue_tracker": "https://github.com/il90il90/hass-requester/issues",
   "codeowners": ["@il90il90"],
-  "requirements": [],
+  "config_flow": true,
   "dependencies": ["http"],
+  "documentation": "https://github.com/il90il90/hass-requester",
   "iot_class": "cloud_push",
-  "config_flow": true
+  "issue_tracker": "https://github.com/il90il90/hass-requester/issues",
+  "requirements": [],
+  "version": "1.0.0"
 }
