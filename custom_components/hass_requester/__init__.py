@@ -11,7 +11,7 @@ import voluptuous as vol
 from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, ServiceValidationError
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceValidationError, SupportsResponse
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import (
     ALL_SERVICE_DESCRIPTIONS_CACHE,
@@ -169,14 +169,20 @@ def _refresh_services(hass: HomeAssistant, store: RequestStore) -> None:
         )
 
         def _make_handler(req_id: str):
-            async def _handle(call: ServiceCall) -> None:
+            async def _handle(call: ServiceCall) -> dict[str, Any]:
                 req_cfg = hass.data[DOMAIN].get_by_id(req_id)
                 if req_cfg is None:
                     raise ServiceValidationError(f"Request '{req_id}' no longer exists")
-                await async_send_request(hass, req_cfg, dict(call.data))
+                return await async_send_request(hass, req_cfg, dict(call.data))
             return _handle
 
-        hass.services.async_register(DOMAIN, svc_name, _make_handler(req["id"]), schema=schema)
+        hass.services.async_register(
+            DOMAIN,
+            svc_name,
+            _make_handler(req["id"]),
+            schema=schema,
+            supports_response=SupportsResponse.OPTIONAL,
+        )
 
         # Build labeled field descriptors shown in the automation UI
         method = req.get("method", "GET")
@@ -229,7 +235,7 @@ def _refresh_services(hass: HomeAssistant, store: RequestStore) -> None:
 def _register_send_service(hass: HomeAssistant) -> None:
     """Register the generic hass_requester.send service."""
 
-    async def handle_send(call: ServiceCall) -> None:
+    async def handle_send(call: ServiceCall) -> dict[str, Any]:
         store: RequestStore = hass.data[DOMAIN]
         request_ref = call.data[CONF_REQUEST]
         params = call.data.get(CONF_PARAMS, {})
@@ -239,13 +245,14 @@ def _register_send_service(hass: HomeAssistant) -> None:
             raise ServiceValidationError(
                 f"No request found with name or ID '{request_ref}'"
             )
-        await async_send_request(hass, request_config, params)
+        return await async_send_request(hass, request_config, params)
 
     hass.services.async_register(
         DOMAIN,
         SERVICE_SEND,
         handle_send,
         schema=SERVICE_SEND_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 

@@ -93,12 +93,13 @@ async def async_send_request(
     hass: HomeAssistant,
     request_config: dict[str, Any],
     params: dict[str, Any],
-) -> None:
+) -> dict[str, Any]:
     """
     Execute an HTTP request with rendered slot values.
     Slot param values may themselves contain HA Jinja2 templates — they
     are resolved first so the rendered value is available during URL/body rendering.
-    Logs the outcome; does not return response data (v1 scope).
+    Returns a dict with status_code, success, body, and headers so callers
+    can use response_variable in automations.
     """
     rendered_params = _render_params(hass, params)
     variables = _validate_slots(request_config, rendered_params)
@@ -152,13 +153,22 @@ async def async_send_request(
             headers=rendered_headers or None,
             **request_kwargs,
         ) as response:
+            # Parse body — JSON if content-type says so, plain text otherwise
+            content_type = response.headers.get("Content-Type", "")
+            if "application/json" in content_type:
+                try:
+                    body: Any = await response.json(content_type=None)
+                except Exception:
+                    body = await response.text()
+            else:
+                body = await response.text()
+
             if response.status >= 400:
-                body_text = await response.text()
                 _LOGGER.warning(
                     "Request '%s' returned HTTP %s: %s",
                     request_config["name"],
                     response.status,
-                    body_text[:500],
+                    str(body)[:500],
                 )
             else:
                 _LOGGER.info(
@@ -166,7 +176,21 @@ async def async_send_request(
                     request_config["name"],
                     response.status,
                 )
+
+            return {
+                "status_code": response.status,
+                "success": response.status < 400,
+                "body": body,
+                "headers": dict(response.headers),
+            }
+
     except Exception as e:
         _LOGGER.error(
             "Request '%s' failed: %s", request_config["name"], e
         )
+        return {
+            "status_code": 0,
+            "success": False,
+            "body": str(e),
+            "headers": {},
+        }

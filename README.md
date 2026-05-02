@@ -23,6 +23,7 @@
 - [Feature: Template Slot Values](#feature-template-slot-values)
 - [Feature: Lovelace Card Buttons](#feature-lovelace-card-buttons)
 - [Feature: Generic `send` Service](#feature-generic-send-service)
+- [Feature: Response Data](#feature-response-data)
 - [Slot Types Reference](#slot-types-reference)
 - [Service Reference](#service-reference)
 - [Deploying to Home Assistant OS](#deploying-to-home-assistant-os)
@@ -246,6 +247,104 @@ action:
 ```
 
 This is useful when the request name is dynamic or when you want a single action that calls different requests based on conditions.
+
+---
+
+## Feature: Response Data
+
+Every HASS Requester service call returns the full HTTP response. Use `response_variable` in your automation to capture it and branch on the result.
+
+### Response object fields
+
+| Field | Type | Description |
+|---|---|---|
+| `status_code` | int | HTTP status code (200, 404, 500…) |
+| `success` | bool | `true` if status < 400, `false` otherwise |
+| `body` | dict or string | Parsed JSON object if the API returns JSON, plain text otherwise |
+| `headers` | dict | Response headers returned by the server |
+
+### Basic example
+
+```yaml
+action:
+  - action: hass_requester.my_weather_request
+    data:
+      city: "Tel Aviv"
+    response_variable: api_response
+
+  - if:
+      - condition: template
+        value_template: "{{ api_response.success }}"
+    then:
+      - action: notify.mobile_app
+        data:
+          message: "Temperature: {{ api_response.body.temperature }}°C"
+    else:
+      - action: notify.mobile_app
+        data:
+          message: "API error {{ api_response.status_code }}: {{ api_response.body }}"
+```
+
+### Accessing nested JSON fields
+
+If the API returns:
+```json
+{ "data": { "weather": { "temp": 28, "condition": "sunny" } } }
+```
+
+Access fields like this:
+```yaml
+message: >
+  Temp: {{ api_response.body.data.weather.temp }}°C,
+  Condition: {{ api_response.body.data.weather.condition }}
+```
+
+### Saving the response to an input helper
+
+```yaml
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.last_api_response
+    data:
+      value: "{{ api_response.body | tojson }}"
+```
+
+### Conditional branching based on status code
+
+```yaml
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ api_response.status_code == 200 }}"
+        sequence:
+          - action: light.turn_on
+            target:
+              entity_id: light.living_room
+      - conditions:
+          - condition: template
+            value_template: "{{ api_response.status_code == 401 }}"
+        sequence:
+          - action: notify.mobile_app
+            data:
+              message: "Authentication failed — check your API token"
+    default:
+      - action: notify.mobile_app
+        data:
+          message: "Unexpected response: {{ api_response.status_code }}"
+```
+
+### Using the generic `send` service with response_variable
+
+```yaml
+  - action: hass_requester.send
+    data:
+      request: my_weather_request
+      params:
+        city: "Tel Aviv"
+    response_variable: api_response
+```
+
+> **Note:** `response_variable` requires Home Assistant 2023.7 or newer.
 
 ---
 
