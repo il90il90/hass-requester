@@ -303,6 +303,65 @@ actions:
 mode: single
 ```
 
+### Trigger-based example — act only when the API returns a specific value
+
+A common use case: when a device event occurs (e.g. a light turns on), call an API and continue only if the server response meets a condition.
+
+```yaml
+alias: Check server when light turns on
+triggers:
+  - trigger: state
+    entity_id: light.living_room
+    to: "on"
+conditions: []
+actions:
+  # 1. Send the request and capture the response
+  - action: hass_requester.my_request
+    response_variable: result
+
+  # 2. Stop here if the server did not return the expected value
+  - condition: template
+    value_template: "{{ result.body.status == 'active' }}"
+
+  # 3. Reached only when the condition above is true
+  - action: notify.mobile_app_my_phone
+    data:
+      message: "Server is active — proceeding!"
+mode: single
+```
+
+**Use `if/then/else` when you need both branches:**
+
+```yaml
+  - if:
+      - condition: template
+        value_template: "{{ result.body.status == 'active' }}"
+    then:
+      - action: light.turn_on
+        target:
+          entity_id: light.bedroom
+    else:
+      - action: notify.mobile_app_my_phone
+        data:
+          message: "Server inactive, skipping."
+```
+
+**Common condition templates:**
+
+```yaml
+# Numeric value in the response body
+value_template: "{{ result.body.temperature > 30 }}"
+
+# Exact HTTP status code
+value_template: "{{ result.status_code == 200 }}"
+
+# Plain-text response
+value_template: "{{ result.body == 'OK' }}"
+
+# Nested JSON field
+value_template: "{{ result.body.data.device.state == 'on' }}"
+```
+
 ### Basic example
 
 ```yaml
