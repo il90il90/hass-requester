@@ -263,6 +263,46 @@ Every HASS Requester service call returns the full HTTP response. Use `response_
 | `body` | dict or string | Parsed JSON object if the API returns JSON, plain text otherwise |
 | `headers` | dict | Response headers returned by the server |
 
+### Complete automation example
+
+The following is a full automation you can paste directly into Home Assistant.  
+It calls an API request named `my_weather_request` every hour, captures the response, and sends a notification with the temperature — or an error message if the call failed.
+
+```yaml
+alias: Weather check every hour
+description: Fetch temperature and notify via mobile
+triggers:
+  - trigger: time_pattern
+    hours: "/1"        # every hour
+conditions: []
+actions:
+  # 1. Call the request and capture the response
+  - action: hass_requester.my_weather_request
+    data:
+      city: "Tel Aviv"
+    response_variable: api_response
+
+  # 2. Branch on success / failure
+  - if:
+      - condition: template
+        value_template: "{{ api_response.success }}"
+    then:
+      # Success — use the returned body
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "Weather update"
+          message: >
+            Temperature: {{ api_response.body.temperature }}°C
+            Feels like: {{ api_response.body.feels_like }}°C
+    else:
+      # HTTP error — report the status code
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "Weather API error"
+          message: "Request failed with status {{ api_response.status_code }}"
+mode: single
+```
+
 ### Basic example
 
 ```yaml
