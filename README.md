@@ -16,15 +16,27 @@
 - [Installation](#installation)
   - [Step 1 — Add via HACS](#step-1--add-via-hacs)
   - [Step 2 — Add the Integration](#step-2--add-the-integration)
-- [Feature: Panel UI](#feature-panel-ui)
-- [Feature: CURL Import](#feature-curl-import)
-- [Feature: Dynamic Slots](#feature-dynamic-slots)
-- [Feature: Per-Request Services (Automation UI)](#feature-per-request-services-automation-ui)
-- [Feature: Template Slot Values](#feature-template-slot-values)
-- [Feature: Lovelace Card Buttons](#feature-lovelace-card-buttons)
-- [Feature: Generic `send` Service](#feature-generic-send-service)
-- [Feature: Response Data](#feature-response-data)
-- [Slot Types Reference](#slot-types-reference)
+- [Panel UI](#panel-ui)
+  - [Creating & Editing Requests](#creating--editing-requests)
+  - [Import & Export](#import--export)
+  - [cURL Import](#curl-import)
+- [Dynamic Slots](#dynamic-slots)
+  - [Slot Types](#slot-types)
+  - [Template Values in Slots](#template-values-in-slots)
+- [Automation](#automation)
+  - [Per-Request Services](#per-request-services)
+  - [Generic `send` Service](#generic-send-service)
+  - [Capturing the Response (`response_variable`)](#capturing-the-response-response_variable)
+- [Dashboard (Lovelace)](#dashboard-lovelace)
+- [Scenarios & Examples](#scenarios--examples)
+  - [Scenario 1 — Send a notification when motion is detected](#scenario-1--send-a-notification-when-motion-is-detected)
+  - [Scenario 2 — Fetch weather and notify every hour](#scenario-2--fetch-weather-and-notify-every-hour)
+  - [Scenario 3 — Control a smart device via REST API](#scenario-3--control-a-smart-device-via-rest-api)
+  - [Scenario 4 — Webhook on door open](#scenario-4--webhook-on-door-open)
+  - [Scenario 5 — API with token stored in an input helper](#scenario-5--api-with-token-stored-in-an-input-helper)
+  - [Scenario 6 — Check server status and act conditionally](#scenario-6--check-server-status-and-act-conditionally)
+  - [Scenario 7 — Save API response to an entity](#scenario-7--save-api-response-to-an-entity)
+  - [Scenario 8 — Dashboard button that triggers a request](#scenario-8--dashboard-button-that-triggers-a-request)
 - [Service Reference](#service-reference)
 - [Deploying to Home Assistant OS](#deploying-to-home-assistant-os)
 - [Development](#development)
@@ -42,8 +54,9 @@ HASS Requester lets you define HTTP requests once in a visual panel, then trigge
 | Visual editor | No | Yes |
 | Dynamic parameters (slots) | Limited | Full support |
 | Jinja2 templates in slot values | No | Yes |
-| CURL import | No | Yes |
+| cURL import | No | Yes |
 | Per-request automation UI | No | Yes (labeled fields) |
+| Capture HTTP response in automations | No | Yes |
 | Test before saving | No | Yes |
 
 ---
@@ -72,7 +85,9 @@ HASS Requester lets you define HTTP requests once in a visual panel, then trigge
 
 ---
 
-## Feature: Panel UI
+## Panel UI
+
+### Creating & Editing Requests
 
 The sidebar panel is your central place to manage all HTTP requests.
 
@@ -86,14 +101,20 @@ The sidebar panel is your central place to manage all HTTP requests.
 **How to open it:**
 Click **Requester** in the Home Assistant sidebar (admin only).
 
----
+### Import & Export
 
-## Feature: CURL Import
+You can back up and restore requests as JSON files.
+
+- **Export all** — saves a single JSON file with all your requests
+- **Import** — loads requests from a JSON file; if a request with the same name already exists, you can choose to update or skip it
+- **Per-request export/import** — available inside the request editor to back up a single request
+
+### cURL Import
 
 Already have a working curl command? Import it in one click.
 
 **How to use:**
-1. Open the request editor → click **Import from CURL**
+1. Open the request editor → click **⬇ cURL**
 2. Paste your curl command, for example:
    ```bash
    curl -X POST "https://api.example.com/notify" \
@@ -105,7 +126,7 @@ Already have a working curl command? Import it in one click.
 
 ---
 
-## Feature: Dynamic Slots
+## Dynamic Slots
 
 Slots are named placeholders inside your request that get filled with real values when the request is triggered.
 
@@ -137,9 +158,48 @@ GET https://api.example.com/notify?name=John&location=Home
 - Headers: `Authorization: Bearer {{ token }}`
 - Body (JSON): `{ "name": "{{ person }}", "action": "arrived" }`
 
+### Slot Types
+
+When defining a slot in the panel, choose a type to get the right input field in the automation editor:
+
+| Type | Description | Example value |
+|---|---|---|
+| `text` | Any string or template | `"hello"` or `"{{ states('sensor.name') }}"` |
+| `select` | Fixed list of options | `"option_a"` |
+| `number` | Numeric value | `42` |
+| `boolean` | true / false toggle | `true` |
+
+### Template Values in Slots
+
+Slot values can contain **Home Assistant Jinja2 templates**. HASS Requester resolves them **before** building the HTTP request — so the final URL and body always contain real values.
+
+```
+You pass:     person: "{{ states('input_text.person_name') }}"
+                           │
+                           │  HASS Requester renders this
+                           ▼
+Resolved to:  person: "John"
+                           │
+                           │  Injected into URL / body
+                           ▼
+Final URL:    https://api.example.com/notify?name=John
+```
+
+**Common template examples:**
+
+| What you want | Template value |
+|---|---|
+| State of an entity | `"{{ states('sensor.front_door') }}"` |
+| Entity attribute | `"{{ state_attr('device_tracker.phone', 'latitude') }}"` |
+| Trigger event data | `"{{ trigger.event.data.name }}"` |
+| Input helper value | `"{{ states('input_text.api_token') }}"` |
+| Current timestamp | `"{{ now().timestamp() \| int }}"` |
+
 ---
 
-## Feature: Per-Request Services (Automation UI)
+## Automation
+
+### Per-Request Services
 
 Every saved request automatically registers its own HA service named `hass_requester.<request_name>`.
 
@@ -147,7 +207,6 @@ This means each request shows up as a **labeled action** in the automation edito
 
 **Example — request named `person_arrived` with a `person` slot:**
 
-In the automation YAML:
 ```yaml
 action:
   - action: hass_requester.person_arrived
@@ -164,39 +223,76 @@ In the automation visual editor: search for **`Requester:`** to find your reques
 
 > **Note:** After saving a new request in the panel, do a hard browser refresh (**Ctrl+Shift+R**) for the Lovelace editor to recognize the new service name.
 
----
+### Generic `send` Service
 
-## Feature: Template Slot Values
+If you prefer to reference requests by name without using the per-request service, use `hass_requester.send`:
 
-Slot values can contain **Home Assistant Jinja2 templates**. HASS Requester resolves them **before** building the HTTP request — so the final URL and body always contain real values.
-
-**How it works:**
-
-```
-You pass:     person: "{{ states('input_text.person_name') }}"
-                           │
-                           │  HASS Requester renders this
-                           ▼
-Resolved to:  person: "John"
-                           │
-                           │  Injected into URL / body
-                           ▼
-Final URL:    https://api.example.com/notify?name=John
+```yaml
+action:
+  - action: hass_requester.send
+    data:
+      request: person_arrived        # name of the saved request
+      params:
+        person: "John"               # static slot value
+        location: "{{ states('zone.home') }}"  # template slot value
 ```
 
-**Template examples:**
+This is useful when the request name is dynamic or when you want a single action that calls different requests based on conditions.
 
-| What you want | Template value |
-|---|---|
-| State of an entity | `"{{ states('sensor.front_door') }}"` |
-| Entity attribute | `"{{ state_attr('device_tracker.phone', 'latitude') }}"` |
-| Trigger event data | `"{{ trigger.event.data.name }}"` |
-| Input helper value | `"{{ states('input_text.api_token') }}"` |
-| Current timestamp | `"{{ now().timestamp() \| int }}"` |
+### Capturing the Response (`response_variable`)
+
+Every HASS Requester service call returns the full HTTP response.  
+Use `response_variable` in your automation to capture it and branch on the result.
+
+> **Requires Home Assistant 2023.7 or newer.**
+
+**Response object fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `status_code` | int | HTTP status code (200, 404, 500…) |
+| `success` | bool | `true` if status < 400, `false` otherwise |
+| `body` | dict or string | Parsed JSON object if the API returns JSON, plain text otherwise |
+| `headers` | dict | Response headers returned by the server |
+
+**Basic usage:**
+
+```yaml
+- action: hass_requester.my_request
+  data:
+    city: "Tel Aviv"
+  response_variable: result
+
+- action: notify.mobile_app_my_phone
+  data:
+    message: "Status {{ result.status_code }}: {{ result.body.temperature }}°C"
+```
+
+**Common condition templates:**
+
+```yaml
+# Success check
+value_template: "{{ result.success }}"
+
+# Specific field value
+value_template: "{{ result.body.status == 'active' }}"
+
+# Numeric threshold
+value_template: "{{ result.body.temperature > 30 }}"
+
+# Exact status code
+value_template: "{{ result.status_code == 200 }}"
+
+# Nested JSON field
+value_template: "{{ result.body.data.device.state == 'on' }}"
+
+# Plain-text response
+value_template: "{{ result.body == 'OK' }}"
+```
 
 ---
 
-## Feature: Lovelace Card Buttons
+## Dashboard (Lovelace)
 
 You can trigger any saved request directly from a **dashboard button** — with slot values read from HA entities in real time.
 
@@ -232,231 +328,323 @@ tap_action:
 
 ---
 
-## Feature: Generic `send` Service
+## Scenarios & Examples
 
-If you prefer to reference requests by name without using the per-request service, use `hass_requester.send`:
+### Scenario 1 — Send a notification when motion is detected
 
+**Goal:** When the living room motion sensor fires, call an external API to log the event, then send a push notification.
+
+**Request setup in panel:**
+- Name: `log_motion_event`
+- Method: `POST`
+- URL: `https://my-server.com/api/events`
+- Body: `{ "room": "{{ room }}", "timestamp": "{{ ts }}" }`
+- Slots: `room` (text), `ts` (text)
+
+**Automation:**
 ```yaml
-action:
-  - action: hass_requester.send
-    data:
-      request: person_arrived        # name of the saved request
-      params:
-        person: "John"               # static slot value
-        location: "{{ states('zone.home') }}"  # template slot value
-```
-
-This is useful when the request name is dynamic or when you want a single action that calls different requests based on conditions.
-
----
-
-## Feature: Response Data
-
-Every HASS Requester service call returns the full HTTP response. Use `response_variable` in your automation to capture it and branch on the result.
-
-### Response object fields
-
-| Field | Type | Description |
-|---|---|---|
-| `status_code` | int | HTTP status code (200, 404, 500…) |
-| `success` | bool | `true` if status < 400, `false` otherwise |
-| `body` | dict or string | Parsed JSON object if the API returns JSON, plain text otherwise |
-| `headers` | dict | Response headers returned by the server |
-
-### Complete automation example
-
-The following is a full automation you can paste directly into Home Assistant.  
-It calls an API request named `my_weather_request` every hour, captures the response, and sends a notification with the temperature — or an error message if the call failed.
-
-```yaml
-alias: Weather check every hour
-description: Fetch temperature and notify via mobile
+alias: Log motion event
 triggers:
-  - trigger: time_pattern
-    hours: "/1"        # every hour
-conditions: []
+  - trigger: state
+    entity_id: binary_sensor.living_room_motion
+    to: "on"
 actions:
-  # 1. Call the request and capture the response
-  - action: hass_requester.my_weather_request
+  - action: hass_requester.log_motion_event
     data:
-      city: "Tel Aviv"
-    response_variable: api_response
+      room: "Living Room"
+      ts: "{{ now().isoformat() }}"
+    response_variable: result
 
-  # 2. Branch on success / failure
-  - if:
-      - condition: template
-        value_template: "{{ api_response.success }}"
-    then:
-      # Success — use the returned body
-      - action: notify.mobile_app_my_phone
-        data:
-          title: "Weather update"
-          message: >
-            Temperature: {{ api_response.body.temperature }}°C
-            Feels like: {{ api_response.body.feels_like }}°C
-    else:
-      # HTTP error — report the status code
-      - action: notify.mobile_app_my_phone
-        data:
-          title: "Weather API error"
-          message: "Request failed with status {{ api_response.status_code }}"
+  - action: notify.mobile_app_my_phone
+    data:
+      title: "Motion detected"
+      message: >
+        {% if result.success %}
+          Event logged successfully.
+        {% else %}
+          Motion detected but logging failed ({{ result.status_code }}).
+        {% endif %}
 mode: single
 ```
 
-### Trigger-based example — act only when the API returns a specific value
+---
 
-A common use case: when a device event occurs (e.g. a light turns on), call an API and continue only if the server response meets a condition.
+### Scenario 2 — Fetch weather and notify every hour
 
+**Goal:** Every hour, fetch the current temperature from an external weather API and send it as a notification.
+
+**Request setup in panel:**
+- Name: `get_weather`
+- Method: `GET`
+- URL: `https://api.weatherapi.com/v1/current.json?key={{ api_key }}&q={{ city }}`
+- Slots: `api_key` (text), `city` (text)
+
+**Automation:**
 ```yaml
-alias: Check server when light turns on
+alias: Hourly weather update
+triggers:
+  - trigger: time_pattern
+    hours: "/1"
+actions:
+  - action: hass_requester.get_weather
+    data:
+      api_key: "{{ states('input_text.weather_api_key') }}"
+      city: "Tel Aviv"
+    response_variable: weather
+
+  - if:
+      - condition: template
+        value_template: "{{ weather.success }}"
+    then:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "Weather — Tel Aviv"
+          message: >
+            {{ weather.body.current.temp_c }}°C,
+            {{ weather.body.current.condition.text }}
+    else:
+      - action: notify.mobile_app_my_phone
+        data:
+          title: "Weather API error"
+          message: "Failed to fetch weather ({{ weather.status_code }})"
+mode: single
+```
+
+---
+
+### Scenario 3 — Control a smart device via REST API
+
+**Goal:** When a HA switch is turned on, send a REST command to an external smart home bridge to turn on a specific device.
+
+**Request setup in panel:**
+- Name: `set_device_state`
+- Method: `PUT`
+- URL: `https://bridge.local/api/devices/{{ device_id }}/state`
+- Headers: `Authorization: Bearer {{ token }}`
+- Body: `{ "state": "{{ state }}" }`
+- Slots: `device_id` (text), `token` (text), `state` (select: on/off)
+
+**Automation:**
+```yaml
+alias: Sync bridge when switch changes
+triggers:
+  - trigger: state
+    entity_id: input_boolean.living_room_scene
+actions:
+  - action: hass_requester.set_device_state
+    data:
+      device_id: "lamp-001"
+      token: "{{ states('input_text.bridge_token') }}"
+      state: "{{ states('input_boolean.living_room_scene') }}"
+    response_variable: result
+
+  - condition: template
+    value_template: "{{ not result.success }}"
+
+  - action: notify.mobile_app_my_phone
+    data:
+      message: "Bridge command failed: {{ result.status_code }}"
+mode: queued
+max: 5
+```
+
+---
+
+### Scenario 4 — Webhook on door open
+
+**Goal:** Send a webhook to an external service (e.g. Zapier, Make, IFTTT) every time the front door opens, including the time and door name.
+
+**Request setup in panel:**
+- Name: `door_webhook`
+- Method: `POST`
+- URL: `https://hooks.zapier.com/hooks/catch/xxxxx/yyyyy/`
+- Body: `{ "door": "{{ door_name }}", "opened_at": "{{ opened_at }}", "user": "{{ user }}" }`
+- Slots: `door_name` (text), `opened_at` (text), `user` (text)
+
+**Automation:**
+```yaml
+alias: Notify Zapier on door open
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.front_door
+    to: "on"
+actions:
+  - action: hass_requester.door_webhook
+    data:
+      door_name: "Front Door"
+      opened_at: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+      user: "{{ states('input_text.last_person_home') }}"
+mode: single
+```
+
+---
+
+### Scenario 5 — API with token stored in an input helper
+
+**Goal:** Call a private API that requires an auth token. Store the token in an `input_text` helper so it can be updated without changing the automation.
+
+**Setup:**
+1. Create an `input_text` helper named `my_api_token` in **Settings → Helpers**
+2. Set the token value there
+
+**Request setup in panel:**
+- Name: `private_api_call`
+- Method: `GET`
+- URL: `https://my-private-api.com/data`
+- Headers: `Authorization: Bearer {{ token }}`
+- Slots: `token` (text)
+
+**Automation:**
+```yaml
+actions:
+  - action: hass_requester.private_api_call
+    data:
+      token: "{{ states('input_text.my_api_token') }}"
+    response_variable: result
+```
+
+> **Tip:** Use `input_text` helpers to store tokens, API keys, and other values that may change — no need to edit automations when you rotate credentials.
+
+---
+
+### Scenario 6 — Check server status and act conditionally
+
+**Goal:** When a light turns on, verify with an external server that the action is allowed. Proceed only if the server confirms.
+
+**Request setup in panel:**
+- Name: `check_permission`
+- Method: `GET`
+- URL: `https://my-server.com/api/permission?action={{ action }}`
+- Slots: `action` (text)
+
+**Automation:**
+```yaml
+alias: Check permission before turning on lights
 triggers:
   - trigger: state
     entity_id: light.living_room
     to: "on"
-conditions: []
 actions:
-  # 1. Send the request and capture the response
-  - action: hass_requester.my_request
-    response_variable: result
-
-  # 2. Stop here if the server did not return the expected value
-  - condition: template
-    value_template: "{{ result.body.status == 'active' }}"
-
-  # 3. Reached only when the condition above is true
-  - action: notify.mobile_app_my_phone
+  # Ask the server if this action is allowed
+  - action: hass_requester.check_permission
     data:
-      message: "Server is active — proceeding!"
+      action: "light_on"
+    response_variable: perm
+
+  # Stop if the server says no
+  - condition: template
+    value_template: "{{ perm.body.allowed == true }}"
+
+  # Proceed — the server confirmed
+  - action: scene.turn_on
+    target:
+      entity_id: scene.evening_mode
 mode: single
 ```
 
-**Use `if/then/else` when you need both branches:**
-
+**With `if/then/else` for full branching:**
 ```yaml
   - if:
       - condition: template
-        value_template: "{{ result.body.status == 'active' }}"
+        value_template: "{{ perm.body.allowed == true }}"
     then:
-      - action: light.turn_on
+      - action: scene.turn_on
         target:
-          entity_id: light.bedroom
+          entity_id: scene.evening_mode
     else:
+      - action: light.turn_off
+        target:
+          entity_id: light.living_room
       - action: notify.mobile_app_my_phone
         data:
-          message: "Server inactive, skipping."
+          message: "Action blocked by server: {{ perm.body.reason }}"
 ```
-
-**Common condition templates:**
-
-```yaml
-# Numeric value in the response body
-value_template: "{{ result.body.temperature > 30 }}"
-
-# Exact HTTP status code
-value_template: "{{ result.status_code == 200 }}"
-
-# Plain-text response
-value_template: "{{ result.body == 'OK' }}"
-
-# Nested JSON field
-value_template: "{{ result.body.data.device.state == 'on' }}"
-```
-
-### Basic example
-
-```yaml
-action:
-  - action: hass_requester.my_weather_request
-    data:
-      city: "Tel Aviv"
-    response_variable: api_response
-
-  - if:
-      - condition: template
-        value_template: "{{ api_response.success }}"
-    then:
-      - action: notify.mobile_app
-        data:
-          message: "Temperature: {{ api_response.body.temperature }}°C"
-    else:
-      - action: notify.mobile_app
-        data:
-          message: "API error {{ api_response.status_code }}: {{ api_response.body }}"
-```
-
-### Accessing nested JSON fields
-
-If the API returns:
-```json
-{ "data": { "weather": { "temp": 28, "condition": "sunny" } } }
-```
-
-Access fields like this:
-```yaml
-message: >
-  Temp: {{ api_response.body.data.weather.temp }}°C,
-  Condition: {{ api_response.body.data.weather.condition }}
-```
-
-### Saving the response to an input helper
-
-```yaml
-  - action: input_text.set_value
-    target:
-      entity_id: input_text.last_api_response
-    data:
-      value: "{{ api_response.body | tojson }}"
-```
-
-### Conditional branching based on status code
-
-```yaml
-  - choose:
-      - conditions:
-          - condition: template
-            value_template: "{{ api_response.status_code == 200 }}"
-        sequence:
-          - action: light.turn_on
-            target:
-              entity_id: light.living_room
-      - conditions:
-          - condition: template
-            value_template: "{{ api_response.status_code == 401 }}"
-        sequence:
-          - action: notify.mobile_app
-            data:
-              message: "Authentication failed — check your API token"
-    default:
-      - action: notify.mobile_app
-        data:
-          message: "Unexpected response: {{ api_response.status_code }}"
-```
-
-### Using the generic `send` service with response_variable
-
-```yaml
-  - action: hass_requester.send
-    data:
-      request: my_weather_request
-      params:
-        city: "Tel Aviv"
-    response_variable: api_response
-```
-
-> **Note:** `response_variable` requires Home Assistant 2023.7 or newer.
 
 ---
 
-## Slot Types Reference
+### Scenario 7 — Save API response to an entity
 
-When defining a slot in the panel, choose a type to get the right input field in the automation editor:
+**Goal:** Periodically fetch data from an API and store the result in an `input_text` helper so it can be displayed on the dashboard or used in other automations.
 
-| Type | Description | Example value |
-|---|---|---|
-| `text` | Any string or template | `"hello"` or `"{{ states('sensor.name') }}"` |
-| `select` | Fixed list of options | `"option_a"` |
-| `number` | Numeric value | `42` |
-| `boolean` | true / false toggle | `true` |
+**Request setup in panel:**
+- Name: `get_server_status`
+- Method: `GET`
+- URL: `https://my-server.com/api/status`
+
+**Automation:**
+```yaml
+alias: Refresh server status every 5 minutes
+triggers:
+  - trigger: time_pattern
+    minutes: "/5"
+actions:
+  - action: hass_requester.get_server_status
+    response_variable: status
+
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.server_status
+    data:
+      value: "{{ status.body.state }} ({{ status.body.uptime }}s)"
+
+  # Also store the full JSON for later use
+  - action: input_text.set_value
+    target:
+      entity_id: input_text.server_status_raw
+    data:
+      value: "{{ status.body | tojson }}"
+mode: single
+```
+
+---
+
+### Scenario 8 — Dashboard button that triggers a request
+
+**Goal:** Add a button to a Lovelace dashboard that calls an API directly, passing a value from an entity at the time of the press.
+
+**Request setup in panel:**
+- Name: `ring_doorbell`
+- Method: `POST`
+- URL: `https://my-server.com/api/doorbell`
+- Body: `{ "message": "{{ message }}", "volume": {{ volume }} }`
+- Slots: `message` (text), `volume` (number)
+
+**Lovelace card:**
+```yaml
+type: button
+name: Ring Doorbell
+icon: mdi:doorbell
+tap_action:
+  action: call-service
+  service: hass_requester.ring_doorbell
+  service_data:
+    message: "Someone at the door"
+    volume: "{{ states('input_number.doorbell_volume') | int }}"
+```
+
+**Multiple buttons with different values:**
+```yaml
+type: grid
+columns: 2
+cards:
+  - type: button
+    name: Low volume
+    tap_action:
+      action: call-service
+      service: hass_requester.ring_doorbell
+      service_data:
+        message: "Soft ring"
+        volume: 30
+
+  - type: button
+    name: High volume
+    tap_action:
+      action: call-service
+      service: hass_requester.ring_doorbell
+      service_data:
+        message: "Loud ring"
+        volume: 100
+```
 
 ---
 
@@ -471,6 +659,7 @@ action: hass_requester.person_arrived
 data:
   person: "John"           # slot named 'person'
   location: "home"         # slot named 'location'
+response_variable: result  # optional — capture the HTTP response
 ```
 
 ### `hass_requester.send`
@@ -488,6 +677,7 @@ data:
   request: person_arrived
   params:
     person: "John"
+response_variable: result  # optional
 ```
 
 ---
