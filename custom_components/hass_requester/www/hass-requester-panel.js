@@ -1279,7 +1279,7 @@ let CurlImporter = class CurlImporter extends i$2 {
     render() {
         return b `
       <button class="import-btn" @click=${() => (this._open = true)}>
-        ⬇ Import from CURL
+        ⬇ cURL
       </button>
 
       ${this._open
@@ -1336,17 +1336,18 @@ CurlImporter.styles = i$5 `
       display: block;
     }
     .import-btn {
-      padding: 7px 18px;
+      padding: 7px 12px;
       background: none;
       border: 1px solid var(--primary-color);
       color: var(--primary-color);
       border-radius: 6px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
+      white-space: nowrap;
     }
     .import-btn:hover {
       background: rgba(var(--rgb-primary-color, 3,169,244), 0.08);
@@ -2363,21 +2364,26 @@ RequestEditor.styles = i$5 `
       justify-content: space-between;
       align-items: center;
       margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 10px;
     }
     .header-title {
       display: flex;
       align-items: center;
       gap: 10px;
+      min-width: 0;
     }
     .header-title img {
       width: 36px;
       height: 36px;
       border-radius: 7px;
+      flex-shrink: 0;
     }
     .header-actions {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
+      flex-wrap: wrap;
     }
     .card {
       background: var(--card-background-color);
@@ -2676,27 +2682,29 @@ RequestEditor.styles = i$5 `
     }
     .copy-dialog-copy.done { background: #43a047; }
     .btn-export {
-      padding: 8px 16px;
+      padding: 7px 12px;
       background: none;
       border: 1px solid var(--primary-color);
       border-radius: 6px;
       color: var(--primary-color);
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
+      white-space: nowrap;
     }
     .btn-export:hover {
       background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.08);
     }
     .btn-import {
-      padding: 8px 16px;
+      padding: 7px 12px;
       background: none;
       border: 1px solid var(--divider-color);
       border-radius: 6px;
       color: var(--primary-text-color);
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
+      white-space: nowrap;
     }
     .btn-import:hover {
       border-color: var(--primary-color);

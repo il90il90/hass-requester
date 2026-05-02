@@ -15,17 +15,18 @@ export class CurlImporter extends LitElement {
       display: block;
     }
     .import-btn {
-      padding: 7px 18px;
+      padding: 7px 12px;
       background: none;
       border: 1px solid var(--primary-color);
       color: var(--primary-color);
       border-radius: 6px;
       cursor: pointer;
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
+      white-space: nowrap;
     }
     .import-btn:hover {
       background: rgba(var(--rgb-primary-color, 3,169,244), 0.08);
@@ -141,7 +142,7 @@ export class CurlImporter extends LitElement {
   render() {
     return html`
       <button class="import-btn" @click=${() => (this._open = true)}>
-        ⬇ Import from CURL
+        ⬇ cURL
       </button>
 
       ${this._open
