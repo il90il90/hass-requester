@@ -24,6 +24,7 @@
   - [Slot Types](#slot-types)
   - [Template Values in Slots](#template-values-in-slots)
 - [Automation](#automation)
+  - [Complete Working Example — TRUE / FALSE on a name](#complete-working-example--true--false-on-a-name)
   - [Per-Request Services](#per-request-services)
   - [Generic `send` Service](#generic-send-service)
   - [Capturing the Response (`response_variable`)](#capturing-the-response-response_variable)
@@ -198,6 +199,187 @@ Final URL:    https://api.example.com/notify?name=John
 ---
 
 ## Automation
+
+This section shows you exactly how to call a saved request from a Home Assistant automation, capture the HTTP response, and branch on it.
+
+If you've never used HASS Requester from an automation before, **start with the working example below** — it walks through every piece end‑to‑end. The subsections that follow (`Per-Request Services`, `send`, `response_variable`) are the reference for each individual feature.
+
+### Complete Working Example — TRUE / FALSE on a name
+
+A small but **real** automation that:
+
+1. Sends a name typed by the user to a public test API (`https://httpbin.org/post`)
+2. Reads the response
+3. Sends a notification with **TRUE** if the name is `israel`, otherwise **FALSE**
+
+> Why `httpbin.org/post`? It's a free public service that echoes back any JSON you send — no API key, no auth, perfect for testing. Whatever you POST in the body comes back inside `json` in the response.
+
+**The full path — at a glance:**
+
+```
+┌─────────────────────────┐    ┌──────────────────────────┐    ┌──────────────────────────┐    ┌───────────────────────┐
+│ STEP 1                  │    │ STEP 2                   │    │ STEP 3 ⭐ AUTOMATION ⭐  │    │ STEP 4                │
+│ Create input_text       │ →  │ Create the request       │ →  │ Build the automation     │ →  │ Test it               │
+│ helper for the user     │    │ in the Requester panel   │    │ that calls the request   │    │ by changing the input │
+└─────────────────────────┘    └──────────────────────────┘    └──────────────────────────┘    └───────────────────────┘
+```
+
+---
+
+#### STEP 1 — Create an `input_text` helper (the user's input)
+
+This is the field the user will type a name into. The automation will react every time it changes.
+
+1. Open **Settings → Devices & Services → Helpers**
+2. Click **+ Create Helper → Text**
+3. Fill in:
+
+   | Field | Value |
+   |---|---|
+   | Name | `User Name` |
+   | Entity ID *(auto-generated)* | `input_text.user_name` |
+
+4. Click **Create**.
+
+You can now set its value from **Developer Tools → States** or any dashboard input card.
+
+---
+
+#### STEP 2 — Create the request in the Requester panel
+
+This is where you define the HTTP call once. After you save it, HA gets a new service `hass_requester.check_name` that any automation can call.
+
+1. Click **Requester** in the HA sidebar
+2. Click **+ New Request** and fill in:
+
+   | Field | Value |
+   |---|---|
+   | **Name** | `check_name` |
+   | **Method** | `POST` |
+   | **URL** | `https://httpbin.org/post` |
+   | **Headers** | `Content-Type: application/json` |
+   | **Body (JSON)** | `{ "name": "{{ user_name }}" }` |
+   | **Slots** | `user_name` (type: `text`) |
+
+3. Click **Test** with `user_name = israel` to verify. The response from httpbin will look like:
+
+   ```json
+   {
+     "args": {},
+     "data": "{\"name\":\"israel\"}",
+     "headers": { "Content-Type": "application/json", "Host": "httpbin.org" },
+     "json": { "name": "israel" },
+     "url": "https://httpbin.org/post"
+   }
+   ```
+
+   The field we'll branch on in the automation is **`json.name`** — the value we sent, echoed back.
+
+4. Click **Save**.
+
+> **After saving**, hard-refresh the browser (**Ctrl+Shift+R**) so the automation editor sees the new `hass_requester.check_name` service.
+
+---
+
+#### ⭐ STEP 3 — Build the automation ⭐
+
+> **This is the core step.** Everything before this just prepared the inputs (a helper) and the action (a saved request). This step glues them together: trigger → call request → capture response → branch on it.
+
+##### 3.1 — Create the automation
+
+Go to **Settings → Automations & Scenes → + Create Automation → Start with an empty automation → ⋮ menu → Edit in YAML**, then paste the full automation below.
+
+##### 3.2 — The full YAML (read inline comments)
+
+```yaml
+alias: Check name and notify (TRUE / FALSE)
+
+# (A) TRIGGER — fire whenever the user changes input_text.user_name
+triggers:
+  - trigger: state
+    entity_id: input_text.user_name
+
+actions:
+  # (B) CALL THE REQUEST you saved in STEP 2.
+  #     - 'data' fills the slots defined in the panel.
+  #     - The Jinja template is rendered by HASS Requester before the
+  #       HTTP request is sent, so the body becomes {"name": "<value>"}.
+  #     - 'response_variable: result' stores the HTTP response so the
+  #       next step can read it.
+  - action: hass_requester.check_name
+    data:
+      user_name: "{{ states('input_text.user_name') | lower }}"
+    response_variable: result
+
+  # (C) BRANCH on the response:
+  #     result.body          → parsed JSON returned by the server
+  #     result.body.json     → the echoed JSON we sent (httpbin convention)
+  #     result.body.json.name → the name field inside it
+  - if:
+      - condition: template
+        value_template: "{{ result.body.json.name == 'israel' }}"
+    then:
+      # TRUE branch — runs only when the name equals "israel"
+      - action: notify.persistent_notification
+        data:
+          title: "Name check"
+          message: "TRUE — welcome, Israel!"
+    else:
+      # FALSE branch — runs for any other name
+      - action: notify.persistent_notification
+        data:
+          title: "Name check"
+          message: "FALSE — name was '{{ result.body.json.name }}'"
+
+mode: single
+```
+
+##### 3.3 — What each block does, in plain English
+
+| Block | What it does | Why it matters |
+|---|---|---|
+| **(A) Trigger** | Fires the automation every time `input_text.user_name` changes. | This is what makes the automation reactive — it runs on every new name. |
+| **(B) Action: `hass_requester.check_name`** | Calls the saved request. `data:` provides the slot value. `response_variable:` saves the HTTP response into a variable named `result`. | This is the bridge between HA and the HTTP world. The slot template `{{ states(...) }}` is rendered server-side by HASS Requester, so the actual body sent is `{"name":"israel"}`. |
+| **(C) `if / then / else`** | Reads `result.body.json.name` from the captured response and compares it to `'israel'`. | This is where TRUE / FALSE happens. The condition uses a Jinja `value_template` so you can compare any field, on any depth, of the response JSON. |
+
+##### 3.4 — How the data flows on every run
+
+```
+User changes input_text.user_name = "israel"
+            │
+            ▼  trigger fires (A)
+hass_requester.check_name is called  (B)
+            │
+            ▼  HASS Requester renders the slot template
+POST https://httpbin.org/post
+Body: {"name": "israel"}
+            │
+            ▼  httpbin echoes it back
+result.body.json.name  ==  "israel"
+            │
+            ▼  evaluated by the if/then/else (C)
+    ┌──────────────────────┐         ┌────────────────────────────────┐
+    │ name == "israel" ?   │── yes →│ notify: "TRUE — welcome, …"    │
+    │                      │── no  →│ notify: "FALSE — name was …"   │
+    └──────────────────────┘         └────────────────────────────────┘
+```
+
+##### 3.5 — Save the automation
+
+Click **Save** at the bottom of the YAML editor and give it a name if asked.
+
+---
+
+#### STEP 4 — Test it end-to-end
+
+1. Open **Developer Tools → States**, find `input_text.user_name`, set its state to `israel`, click **Set State**.
+   → A persistent notification appears: **"TRUE — welcome, Israel!"**
+2. Repeat with `david`.
+   → The notification flips to: **"FALSE — name was 'david'"**
+
+If both work, you've just used HASS Requester end-to-end. The same four-step pattern — **helper input → saved request → automation that captures the response → branch** — is what every other scenario in this README is built on.
+
+---
 
 ### Per-Request Services
 
